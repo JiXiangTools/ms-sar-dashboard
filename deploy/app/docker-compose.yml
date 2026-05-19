@@ -241,3 +241,9 @@ volumes:
   es-data:
   postgres-data:
   redis-data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.250.32.0/24
