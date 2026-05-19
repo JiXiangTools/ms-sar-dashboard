@@ -134,6 +134,25 @@ go test ./...
 BASE_URL=http://127.0.0.1:8081 ./test/shell/curl.sh
 ```
 
+data-receiver 测试数据上报脚本：
+
+```bash
+DATA_RECEIVER_BASE_URL=http://127.0.0.1:8080 \
+DWZ_APPID=100001 \
+DWZ_APP_SECRET=secret-1 \
+python3 ./test/test-items-upload.py
+
+DATA_RECEIVER_BASE_URL=http://127.0.0.1:8080 \
+DWZ_APPID=100001 \
+DWZ_APP_SECRET=secret-1 \
+python3 ./test/test-action-upload.py
+```
+
+- `test/test-items-upload.py` 调用 `POST /api/v1/msdr/product/report`，批量写入覆盖核心字段的商品/内容样例。
+- `test/test-action-upload.py` 调用 `POST /api/v1/msdr/behavior/report`，写入覆盖全部当前 `event_type`、设备上下文、用户/session/匿名身份和行为扩展属性的用户行为样例。
+- 运行前需确保 `ms-sar-dashboard` 已将对应 `DWZ_APPID` / `DWZ_APP_SECRET` 同步到 data-receiver 使用的 Redis 授权投影。
+- 如果 `ms-data-receiver` 客户端上报 API 的路径、Header、字段、枚举或批量限制发生修改，必须同步更新这两个脚本，避免联调和验收数据与真实接口契约脱节。
+
 ## 容器与打包
 
 - `Dockerfile`：运行镜像构建
@@ -184,13 +203,34 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 
 启动前需要按实际环境修改 `deploy/.env` 中的 `AROF_KAFKA_BOOTSTRAP_SERVERS`、`AROF_REDIS_URL`、`AROF_ES_URL` 和 `AROF_APPID`。
 
+## 应用栈部署
+
+`deploy/app/` 提供 data-receiver、rec-online、search-online 和 dashboard 的完整应用栈，并包含内部 Kafka、Redis、Elasticsearch、PostgreSQL 依赖。依赖服务不暴露宿主机端口，默认只暴露四个业务端口：
+
+- data-receiver：`8593`
+- rec-online：`8594`
+- search-online：`8595`
+- dashboard：`8596`
+
+启动：
+
+```bash
+cd deploy/app
+docker compose up -d
+```
+
+默认初始化：
+
+- dashboard 管理员：`admin`
+- dashboard 默认应用：`appid=100001`，`secret=secret-1`
+
 ## 目录结构
 
 - `cmd/ms-sar-dashboard`：服务启动入口
 - `cmd/hash-password`：bcrypt 密码哈希生成工具
 - `admin/`：本地初始化、调试启动和镜像构建脚本
 - `configs/`：环境配置
-- `deploy/`：离线推荐任务部署 compose 和环境变量
+- `deploy/`：应用栈和离线推荐任务部署 compose
 - `docs/`：设计、接口和协作约束文档
 - `internal/app`：应用装配与生命周期
 - `internal/http`：路由、handler、middleware、UI

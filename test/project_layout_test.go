@@ -16,6 +16,8 @@ func TestProjectLayoutMatchesMsUserCenterConvention(t *testing.T) {
 		"admin/docker-postgres-init.sh",
 		"deploy/.env",
 		"deploy/docker-compose.yml",
+		"deploy/app/.env",
+		"deploy/app/docker-compose.yml",
 		"test/shell/curl.sh",
 	}
 

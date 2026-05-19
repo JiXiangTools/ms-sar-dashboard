@@ -1,0 +1,243 @@
+name: ms-sar-dashboard-app
+
+x-platform: &platform "${DOCKER_PLATFORM}"
+
+x-no-proxy: &no-proxy
+  NO_PROXY: "${NO_PROXY}"
+  no_proxy: "${no_proxy}"
+
+services:
+  kafka:
+    image: "${KAFKA_IMAGE}"
+    platform: *platform
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: CONTROLLER://:29093,PLAINTEXT://:19092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: "${REDIS_IMAGE}"
+    platform: *platform
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  redis-seed:
+    image: "${REDIS_IMAGE}"
+    platform: *platform
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      DEFAULT_APP_ID: "${DEFAULT_APP_ID}"
+      DEFAULT_APP_SECRET: "${DEFAULT_APP_SECRET}"
+    command:
+      - sh
+      - -c
+      - |
+        redis-cli -h redis HSET app_auth_${DEFAULT_APP_ID} \
+          id "${DEFAULT_APP_ID}" \
+          secret "${DEFAULT_APP_SECRET}" \
+          disabled false \
+          updated_at "$$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    restart: "no"
+
+  elasticsearch:
+    image: "${ELASTICSEARCH_IMAGE}"
+    platform: *platform
+    restart: unless-stopped
+    environment:
+      <<: *no-proxy
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --noproxy '*' -fsS http://127.0.0.1:9200 >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+
+  postgres:
+    image: "${POSTGRES_IMAGE}"
+    platform: *platform
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      MSSAR_INIT_ADMIN_NAME: "${MSSAR_INIT_ADMIN_NAME}"
+      MSSAR_INIT_ADMIN_PASSWORD_HASH: "${MSSAR_INIT_ADMIN_PASSWORD_HASH}"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ../../upgrade/sql:/app/upgrade/sql:ro
+      - ../../admin/docker-postgres-init.sh:/docker-entrypoint-initdb.d/01-ms-sar-dashboard-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  postgres-app-seed:
+    image: "${POSTGRES_IMAGE}"
+    platform: *platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
+      DEFAULT_APP_ID: "${DEFAULT_APP_ID}"
+      DEFAULT_APP_NAME: "${DEFAULT_APP_NAME}"
+      DEFAULT_APP_SECRET: "${DEFAULT_APP_SECRET}"
+    command:
+      - sh
+      - -c
+      - |
+        psql -h postgres -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 <<SQL
+        INSERT INTO t_app (id, name, secret, remark, disabled)
+        VALUES (${DEFAULT_APP_ID}, '${DEFAULT_APP_NAME}', '${DEFAULT_APP_SECRET}', 'seeded by deploy/app', FALSE)
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          secret = EXCLUDED.secret,
+          remark = EXCLUDED.remark,
+          disabled = FALSE,
+          last_update_time = NOW();
+        SELECT setval('t_app_id_seq', GREATEST((SELECT COALESCE(MAX(id), 100000) FROM t_app), ${DEFAULT_APP_ID}), TRUE);
+        SQL
+    restart: "no"
+
+  ms-data-receiver:
+    image: "${MS_DATA_RECEIVER_IMAGE}"
+    platform: *platform
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis-seed:
+        condition: service_completed_successfully
+    environment:
+      <<: *no-proxy
+      MSDR_APP_ENV: prod
+      MSDR_AUTH_JWT_SECRET: ms-data-receiver-prod-secret-change-me
+      MSDR_REDIS_ADDRS: redis:6379
+      MSDR_REDIS_DB: "0"
+      MSDR_KAFKA_BROKERS: kafka:19092
+      MSDR_KAFKA_PRODUCT_TOPIC: "${KAFKA_PRODUCT_TOPIC}"
+      MSDR_KAFKA_BEHAVIOR_TOPIC: "${KAFKA_BEHAVIOR_TOPIC}"
+      MSDR_LOG_DIR: /app/logs
+    ports:
+      - "${DATA_RECEIVER_PORT}:8080"
+    volumes:
+      - data-receiver-data:/app/data
+      - data-receiver-logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  ms-rec-online:
+    image: "${MS_REC_ONLINE_IMAGE}"
+    platform: *platform
+    restart: unless-stopped
+    depends_on:
+      redis-seed:
+        condition: service_completed_successfully
+    environment:
+      <<: *no-proxy
+      MSRO_APP_ENV: prod
+      MSRO_REDIS_ADDRS: redis:6379
+      MSRO_REDIS_DB: "0"
+    ports:
+      - "${REC_ONLINE_PORT}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  ms-search-online:
+    image: "${MS_SEARCH_ONLINE_IMAGE}"
+    platform: *platform
+    restart: unless-stopped
+    depends_on:
+      redis-seed:
+        condition: service_completed_successfully
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      <<: *no-proxy
+      MSO_APP_ENV: prod
+      MSO_REDIS_ADDRS: redis:6379
+      MSO_REDIS_DB: "0"
+      MSO_SEARCH_ENGINE_URL: http://elasticsearch:9200
+    ports:
+      - "${SEARCH_ONLINE_PORT}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  ms-sar-dashboard:
+    image: "${MS_SAR_DASHBOARD_IMAGE}"
+    platform: *platform
+    restart: unless-stopped
+    depends_on:
+      postgres-app-seed:
+        condition: service_completed_successfully
+      redis-seed:
+        condition: service_completed_successfully
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      <<: *no-proxy
+      MSSAR_APP_HOST: 0.0.0.0
+      MSSAR_APP_PORT: "8081"
+      MSSAR_AUTH_JWT_SECRET: "${MSSAR_AUTH_JWT_SECRET}"
+      MSSAR_DATABASE_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      MSSAR_REDIS_MODE: standalone
+      MSSAR_REDIS_ADDRS: redis:6379
+      MSSAR_REDIS_DB: "0"
+      MSSAR_ELASTICSEARCH_ADDRS: http://elasticsearch:9200
+    command: ["-config", "/app/configs/prod.yaml"]
+    ports:
+      - "${DASHBOARD_PORT}:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8081/health >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  data-receiver-data:
+  data-receiver-logs:
+  es-data:
+  postgres-data:
+  redis-data:
