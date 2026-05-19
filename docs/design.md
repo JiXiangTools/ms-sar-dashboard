@@ -18,7 +18,7 @@
 
 不做多套授权来源，不做 dashboard 到在线服务的鉴权代理，不在首期做管理员管理 UI，不在 debug 页面写 ES 或 Redis。
 
-接口路径、字段和响应示例见 [api-admin.md](./api-admin.md)。迁移步骤见 [migration.md](./migration.md)。
+接口路径、字段和响应示例见 [api-admin.md](./api-admin.md)。迁移和切换步骤见 [README.md](../README.md)。
 
 ## 2. 目标
 

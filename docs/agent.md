@@ -1,6 +1,6 @@
 # Agent 协作约束
 
-本文面向后续参与 `ms-sar-dashboard` 的自动化 agent 和辅助开发工具。业务设计以 [design.md](./design.md) 为准，接口契约以 [api-admin.md](./api-admin.md) 为准，迁移步骤以 [migration.md](./migration.md) 为准。
+本文面向后续参与 `ms-sar-dashboard` 的自动化 agent 和辅助开发工具。业务设计以 [design.md](./design.md) 为准，接口契约以 [api-admin.md](./api-admin.md) 为准，迁移步骤以 [README.md](../README.md) 为准。
 
 ## 1. 不可破坏的边界
 
@@ -35,7 +35,7 @@
 修改业务边界时必须同步：
 
 - [design.md](./design.md)
-- [migration.md](./migration.md)
+- [README.md](../README.md)
 
 修改接口时必须同步：
 

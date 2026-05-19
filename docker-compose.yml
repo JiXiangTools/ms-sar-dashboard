@@ -1,9 +1,6 @@
 services:
   ms-sar-dashboard:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: dockerhub.seobot.cc/ms/sar-dashboard:latest
+    image: dockerhub.seobot.cc/ms/sar-dashboard:260519_10703db
     container_name: ms-sar-dashboard
     restart: unless-stopped
     cpus: 1.0
