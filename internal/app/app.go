@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
@@ -32,13 +29,13 @@ type Options struct {
 }
 
 type App struct {
-	cfg              config.Config
-	logger           *log.Logger
-	logWriter        io.Closer
-	httpServer       *http.Server
-	database         *database.Client
-	cache            *platformcache.Client
-	elasticsearch    *elasticsearch.Client
+	cfg           config.Config
+	logger        *log.Logger
+	httpServer    *http.Server
+	database      *database.Client
+	cache         *platformcache.Client
+	elasticsearch *elasticsearch.Client
+
 	backgroundCancel context.CancelFunc
 }
 
@@ -48,28 +45,21 @@ func New(opts Options) (*App, error) {
 		return nil, err
 	}
 
-	logWriter, err := newRotatingFileWriter(filepath.Join("logs", "ms-sar-dashboard.log"), 500*1024*1024, 3)
-	if err != nil {
-		return nil, fmt.Errorf("init file logger: %w", err)
-	}
-	logger := log.New(io.MultiWriter(os.Stdout, logWriter), "", log.LstdFlags|log.LUTC|log.Lmicroseconds)
+	logger := log.New(os.Stdout, "", log.LstdFlags|log.LUTC|log.Lmicroseconds)
 
 	databaseClient, err := database.New(cfg.Database)
 	if err != nil {
-		_ = logWriter.Close()
 		return nil, fmt.Errorf("init database: %w", err)
 	}
 
 	cacheClient, err := platformcache.New(cfg.Redis)
 	if err != nil {
-		_ = logWriter.Close()
 		_ = databaseClient.Close()
 		return nil, fmt.Errorf("init redis: %w", err)
 	}
 
 	esClient, err := elasticsearch.New(cfg.Elasticsearch)
 	if err != nil {
-		_ = logWriter.Close()
 		_ = cacheClient.Close()
 		_ = databaseClient.Close()
 		return nil, fmt.Errorf("init elasticsearch: %w", err)
@@ -78,7 +68,6 @@ func New(opts Options) (*App, error) {
 	healthService := health.NewService(cfg.App.Name, cfg.App.Env, cfg.App.Version, databaseClient, cacheClient, esClient)
 	services, err := service.NewContainer(cfg, databaseClient, cacheClient, esClient, logger)
 	if err != nil {
-		_ = logWriter.Close()
 		_ = cacheClient.Close()
 		_ = databaseClient.Close()
 		return nil, fmt.Errorf("init services: %w", err)
@@ -98,7 +87,6 @@ func New(opts Options) (*App, error) {
 	return &App{
 		cfg:           cfg,
 		logger:        logger,
-		logWriter:     logWriter,
 		httpServer:    httpServer,
 		database:      databaseClient,
 		cache:         cacheClient,
@@ -158,125 +146,9 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if err := a.database.Close(); err != nil {
 		errs = append(errs, err)
 	}
-	if a.logWriter != nil {
-		if err := a.logWriter.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
 	return nil
-}
-
-type rotatingFileWriter struct {
-	mu         sync.Mutex
-	path       string
-	maxBytes   int64
-	maxFiles   int
-	file       *os.File
-	currentLen int64
-}
-
-func newRotatingFileWriter(path string, maxBytes int64, maxFiles int) (*rotatingFileWriter, error) {
-	if maxBytes <= 0 {
-		return nil, fmt.Errorf("max log size must be positive")
-	}
-	if maxFiles <= 0 {
-		return nil, fmt.Errorf("max log files must be positive")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-
-	writer := &rotatingFileWriter{
-		path:     path,
-		maxBytes: maxBytes,
-		maxFiles: maxFiles,
-	}
-	if err := writer.open(); err != nil {
-		return nil, err
-	}
-	return writer, nil
-}
-
-func (w *rotatingFileWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.file == nil {
-		if err := w.open(); err != nil {
-			return 0, err
-		}
-	}
-	if w.currentLen > 0 && w.currentLen+int64(len(p)) > w.maxBytes {
-		if err := w.rotate(); err != nil {
-			return 0, err
-		}
-	}
-
-	n, err := w.file.Write(p)
-	w.currentLen += int64(n)
-	return n, err
-}
-
-func (w *rotatingFileWriter) Close() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.file == nil {
-		return nil
-	}
-	err := w.file.Close()
-	w.file = nil
-	return err
-}
-
-func (w *rotatingFileWriter) open() error {
-	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return err
-	}
-	w.file = file
-	w.currentLen = info.Size()
-	return nil
-}
-
-func (w *rotatingFileWriter) rotate() error {
-	if w.file != nil {
-		if err := w.file.Close(); err != nil {
-			return err
-		}
-		w.file = nil
-	}
-
-	for index := w.maxFiles - 1; index >= 1; index-- {
-		source := rotatedLogPath(w.path, index-1)
-		target := rotatedLogPath(w.path, index)
-		if index == w.maxFiles-1 {
-			_ = os.Remove(target)
-		}
-		if _, err := os.Stat(source); err == nil {
-			if err := os.Rename(source, target); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-
-	return w.open()
-}
-
-func rotatedLogPath(path string, index int) string {
-	if index <= 0 {
-		return path
-	}
-	return fmt.Sprintf("%s.%d", path, index)
 }

@@ -23,18 +23,12 @@ const (
 )
 
 func New(cfg config.RedisConfig) (*Client, error) {
-	client := &Client{cfg: cfg}
-
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
 
+	client := &Client{cfg: cfg}
 	client.Client = redis.NewUniversalClient(buildUniversalOptions(cfg))
-	if err := client.ping(context.Background()); err != nil {
-		_ = client.Close()
-		return nil, err
-	}
-
 	return client, nil
 }
 
