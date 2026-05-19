@@ -1,0 +1,44 @@
+app:
+  name: ms-sar-dashboard
+  env: prod
+  host: 0.0.0.0
+  port: 8081
+  read_timeout: 5s
+  write_timeout: 10s
+  shutdown_timeout: 15s
+
+auth:
+  jwt_secret: ""
+  access_token_ttl: 2h
+  issuer: ms-sar-dashboard
+
+log:
+  level: info
+
+database:
+  dsn: ""
+  max_open_conns: 50
+  max_idle_conns: 10
+  conn_max_lifetime: 30m
+  health_check_timeout: 2s
+
+redis:
+  mode: standalone
+  addrs: []
+  key_prefix: ""
+  db: 0
+  dial_timeout: 2s
+  read_timeout: 2s
+  write_timeout: 2s
+  health_check_timeout: 2s
+
+elasticsearch:
+  addrs: []
+  product_index_prefix: ms_search_product
+  request_timeout: 5s
+  max_response_bytes: 4194304
+  debug_enabled: true
+
+recommend_debug:
+  max_candidate_limit: 1000
+  debug_enabled: true

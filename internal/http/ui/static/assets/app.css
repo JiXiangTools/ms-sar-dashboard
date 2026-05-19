@@ -1,0 +1,29 @@
+body {
+  margin: 0;
+  font-family: Arial, "Noto Sans SC", sans-serif;
+  background: #f5f7fb;
+  color: #1f2937;
+}
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.panel {
+  max-width: 720px;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+h1 {
+  margin: 0 0 12px;
+  font-size: 28px;
+}
+p {
+  margin: 0;
+  line-height: 1.6;
+}
