@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/logx"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
 )
 
 func AccessLog(logger *log.Logger) gin.HandlerFunc {

@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/health"
-	"github.com/kely-jian/ms-sar-dashboard/internal/response"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/health"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/response"
 )
 
 type HealthHandler struct {

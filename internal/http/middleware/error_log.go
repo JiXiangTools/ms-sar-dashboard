@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/logx"
-	"github.com/kely-jian/ms-sar-dashboard/internal/response"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/response"
 )
 
 func ErrorLog(logger *log.Logger) gin.HandlerFunc {

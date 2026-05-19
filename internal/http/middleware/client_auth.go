@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/response"
-	"github.com/kely-jian/ms-sar-dashboard/internal/service"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/response"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/service"
 )
 
 const (

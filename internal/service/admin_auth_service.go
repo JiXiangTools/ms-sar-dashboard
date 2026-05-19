@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/apperror"
-	"github.com/kely-jian/ms-sar-dashboard/internal/audit"
-	"github.com/kely-jian/ms-sar-dashboard/internal/auth"
-	"github.com/kely-jian/ms-sar-dashboard/internal/domain"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/logx"
-	"github.com/kely-jian/ms-sar-dashboard/internal/repository"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/apperror"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/auth"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/repository"
 )
 
 type AdminAuthService struct {

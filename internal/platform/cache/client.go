@@ -8,7 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 )
 
 type Client struct {

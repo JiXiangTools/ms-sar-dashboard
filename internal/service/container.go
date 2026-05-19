@@ -7,13 +7,13 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/audit"
-	"github.com/kely-jian/ms-sar-dashboard/internal/auth"
-	"github.com/kely-jian/ms-sar-dashboard/internal/config"
-	platformcache "github.com/kely-jian/ms-sar-dashboard/internal/platform/cache"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/database"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/elasticsearch"
-	"github.com/kely-jian/ms-sar-dashboard/internal/repository"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/auth"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
+	platformcache "github.com/JiXiangTools/ms-sar-dashboard/internal/platform/cache"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/database"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/elasticsearch"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/repository"
 )
 
 type Container struct {

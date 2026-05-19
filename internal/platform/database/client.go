@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 )
 
 type Client struct {

@@ -7,10 +7,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/apperror"
-	"github.com/kely-jian/ms-sar-dashboard/internal/http/middleware"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/logx"
-	"github.com/kely-jian/ms-sar-dashboard/internal/response"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/apperror"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/middleware"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/response"
 )
 
 const ContextKeyLogger = "logger"

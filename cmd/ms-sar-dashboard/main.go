@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/app"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/app"
 )
 
 func main() {

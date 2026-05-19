@@ -3,7 +3,7 @@ package middleware
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/requestid"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/requestid"
 )
 
 func RequestID() gin.HandlerFunc {

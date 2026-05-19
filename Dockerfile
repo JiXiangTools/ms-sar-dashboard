@@ -31,7 +31,7 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -tags nomsgpack -trimpath \
-    -ldflags "-s -w -X github.com/kely-jian/ms-sar-dashboard/internal/version.Commit=${COMMIT_ID} -X github.com/kely-jian/ms-sar-dashboard/internal/version.BuildTime=${BUILD_TIME}" \
+    -ldflags "-s -w -X github.com/JiXiangTools/ms-sar-dashboard/internal/version.Commit=${COMMIT_ID} -X github.com/JiXiangTools/ms-sar-dashboard/internal/version.BuildTime=${BUILD_TIME}" \
     -o /out/ms-sar-dashboard ./cmd/ms-sar-dashboard
 
 FROM dockerhub.seobot.cc/library/alpine:3.21

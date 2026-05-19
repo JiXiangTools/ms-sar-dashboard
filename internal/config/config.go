@@ -11,7 +11,7 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/version"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/version"
 )
 
 const envPrefix = "MSSAR"

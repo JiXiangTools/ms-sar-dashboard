@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/domain"
-	"github.com/kely-jian/ms-sar-dashboard/internal/repository"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/repository"
 )
 
 type Service struct {

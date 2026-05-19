@@ -8,8 +8,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/config"
-	"github.com/kely-jian/ms-sar-dashboard/internal/domain"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 )
 
 const TokenTypeAccess = "access"

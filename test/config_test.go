@@ -3,7 +3,7 @@ package test
 import (
 	"testing"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 )
 
 func TestLoadTestConfig(t *testing.T) {

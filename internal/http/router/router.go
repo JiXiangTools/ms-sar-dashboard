@@ -7,13 +7,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/config"
-	"github.com/kely-jian/ms-sar-dashboard/internal/health"
-	"github.com/kely-jian/ms-sar-dashboard/internal/http/handler"
-	"github.com/kely-jian/ms-sar-dashboard/internal/http/middleware"
-	"github.com/kely-jian/ms-sar-dashboard/internal/http/ui"
-	"github.com/kely-jian/ms-sar-dashboard/internal/response"
-	"github.com/kely-jian/ms-sar-dashboard/internal/service"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/health"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/handler"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/middleware"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/ui"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/response"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/service"
 )
 
 type Dependencies struct {

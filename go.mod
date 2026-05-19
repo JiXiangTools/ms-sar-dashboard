@@ -1,4 +1,4 @@
-module github.com/kely-jian/ms-sar-dashboard
+module github.com/JiXiangTools/ms-sar-dashboard
 
 go 1.26
 

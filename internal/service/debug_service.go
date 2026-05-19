@@ -10,11 +10,11 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/apperror"
-	"github.com/kely-jian/ms-sar-dashboard/internal/audit"
-	"github.com/kely-jian/ms-sar-dashboard/internal/config"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/elasticsearch"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/logx"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/apperror"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/elasticsearch"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
 )
 
 type DebugService struct {

@@ -13,14 +13,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/config"
-	"github.com/kely-jian/ms-sar-dashboard/internal/health"
-	"github.com/kely-jian/ms-sar-dashboard/internal/http/router"
-	platformcache "github.com/kely-jian/ms-sar-dashboard/internal/platform/cache"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/database"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/elasticsearch"
-	"github.com/kely-jian/ms-sar-dashboard/internal/platform/logx"
-	"github.com/kely-jian/ms-sar-dashboard/internal/service"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/health"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/router"
+	platformcache "github.com/JiXiangTools/ms-sar-dashboard/internal/platform/cache"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/database"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/elasticsearch"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/service"
 )
 
 type Options struct {

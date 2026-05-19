@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/kely-jian/ms-sar-dashboard/internal/domain"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 )
 
 type Checker interface {
