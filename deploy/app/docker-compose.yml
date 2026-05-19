@@ -144,9 +144,9 @@ services:
     environment:
       <<: *no-proxy
       MSDR_APP_ENV: prod
-      MSDR_ADMIN_NAME: root
-      MSDR_ADMIN_PASSWORD: admin123
-      MSDR_AUTH_JWT_SECRET: ms-data-receiver-prod-secret-change-me
+      MSDR_ADMIN_NAME: "${DATA_RECEIVER_ADMIN_NAME}"
+      MSDR_ADMIN_PASSWORD: "${DATA_RECEIVER_ADMIN_PASSWORD}"
+      MSDR_AUTH_JWT_SECRET: "${DATA_RECEIVER_AUTH_JWT_SECRET}"
       MSDR_REDIS_ADDRS: redis:6379
       MSDR_REDIS_DB: "0"
       MSDR_KAFKA_BROKERS: kafka:19092
