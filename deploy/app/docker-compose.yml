@@ -144,6 +144,8 @@ services:
     environment:
       <<: *no-proxy
       MSDR_APP_ENV: prod
+      MSDR_ADMIN_NAME: root
+      MSDR_ADMIN_PASSWORD: admin123
       MSDR_AUTH_JWT_SECRET: ms-data-receiver-prod-secret-change-me
       MSDR_REDIS_ADDRS: redis:6379
       MSDR_REDIS_DB: "0"
