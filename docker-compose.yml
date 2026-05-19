@@ -1,0 +1,83 @@
+services:
+  ms-sar-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dockerhub.seobot.cc/ms/sar-dashboard:latest
+    container_name: ms-sar-dashboard
+    restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 512m
+    environment:
+      MSSAR_APP_HOST: 0.0.0.0
+      MSSAR_APP_PORT: "8081"
+      MSSAR_AUTH_JWT_SECRET: ms-sar-dashboard-compose-secret
+      MSSAR_DATABASE_DSN: postgres://postgres:postgres@postgres:5432/ms_sar_dashboard?sslmode=disable
+      MSSAR_REDIS_MODE: standalone
+      MSSAR_REDIS_KEY_PREFIX: ""
+      MSSAR_REDIS_ADDRS: redis:6379
+      MSSAR_REDIS_DB: "8"
+    command:
+      - -config
+      - /app/configs/prod.yaml
+    ports:
+      - "8588:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O - "http://127.0.0.1:8081/health" >/dev/null 2>&1 || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: dockerhub.seobot.cc/library/postgres:18.3
+    container_name: ms-sar-dashboard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ms_sar_dashboard
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      MSSAR_INIT_ADMIN_NAME: admin
+      MSSAR_INIT_ADMIN_PASSWORD_HASH: "$$2a$$10$$iL/vKn0rR9nxI6SYsZsWg.28WnVLZlerDt60XO54vRb0c4.i3cNju"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./upgrade/sql:/app/upgrade/sql:ro
+      - ./admin/docker-postgres-init.sh:/docker-entrypoint-initdb.d/01-ms-sar-dashboard-init.sh:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres -d ms_sar_dashboard
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: dockerhub.seobot.cc/library/redis:8.6.1
+    container_name: ms-sar-dashboard-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli ping | grep PONG
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  postgres-data:
+  redis-data:

@@ -65,7 +65,11 @@ func New(opts Options) (*App, error) {
 		return nil, fmt.Errorf("init elasticsearch: %w", err)
 	}
 
-	healthService := health.NewService(cfg.App.Name, cfg.App.Env, cfg.App.Version, databaseClient, cacheClient, esClient)
+	healthCheckers := []health.Checker{databaseClient, cacheClient}
+	if len(cfg.Elasticsearch.Addrs) > 0 {
+		healthCheckers = append(healthCheckers, esClient)
+	}
+	healthService := health.NewService(cfg.App.Name, cfg.App.Env, cfg.App.Version, healthCheckers...)
 	services, err := service.NewContainer(cfg, databaseClient, cacheClient, esClient, logger)
 	if err != nil {
 		_ = cacheClient.Close()
