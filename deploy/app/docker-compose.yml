@@ -159,7 +159,7 @@ services:
       - data-receiver-data:/app/data
       - data-receiver-logs:/app/logs
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "wget -Y off -qO- http://127.0.0.1:8080/health >/dev/null 2>&1"]
       interval: 30s
       timeout: 5s
       retries: 10
@@ -179,7 +179,7 @@ services:
     ports:
       - "${REC_ONLINE_PORT}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "wget -Y off -q -O - http://127.0.0.1:8080/health >/dev/null 2>&1"]
       interval: 30s
       timeout: 5s
       retries: 10
@@ -202,7 +202,7 @@ services:
     ports:
       - "${SEARCH_ONLINE_PORT}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "wget -Y off -q -O - http://127.0.0.1:8080/health >/dev/null 2>&1"]
       interval: 30s
       timeout: 5s
       retries: 10
@@ -232,7 +232,7 @@ services:
     ports:
       - "${DASHBOARD_PORT}:8081"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8081/health >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "wget -Y off -q -O - http://127.0.0.1:8081/health >/dev/null 2>&1"]
       interval: 30s
       timeout: 5s
       retries: 10
