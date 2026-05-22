@@ -9,7 +9,7 @@
 - 首期必须支持授权应用新增、删除、修改和分页列表。
 - `ms-data-receiver`、`ms-rec-online`、`ms-search-online` 都使用 dashboard 配置的统一应用授权。
 - 三个在线服务授权 Header 固定为 `x-dwzauth-appid`、`x-dwzauth-secret`、`x-request-id`。
-- 三个在线服务必须到 Redis `app_auth_{appid}` 校验 `appid + secret`。
+- 三个在线服务必须调用 dashboard `POST /api/v1/auth/app` 校验 `appid + secret`。
 - 禁止继续使用固定 `x-dwz-auth` 或本地静态 token 作为线上授权。
 - 管理端鉴权固定为 `Authorization: Bearer <jwt>`。
 - 管理员密码必须使用 bcrypt hash。
@@ -26,7 +26,7 @@
 - middleware 负责 request_id、访问日志、错误日志、恢复和认证。
 - 管理端写操作必须写入 `t_admin_log`。
 - 登录成功和失败必须写入 `t_admin_log`，不得只写访问日志。
-- 写操作影响授权缓存时，必须同步更新或删除 Redis `app_auth_{appid}`。
+- 写操作影响授权缓存时，必须同步更新或删除 dashboard 内部 Redis 授权投影 `app_auth_{appid}`。
 - 响应中不得返回管理员密码。
 - 日志和审计中不得记录 password、secret、token 明文。
 
@@ -55,7 +55,7 @@
 - `configs/*.yaml`
 - `internal/config`
 - 认证中间件或 handler 中的授权读取逻辑
-- Redis 授权读取模块
+- dashboard 授权 API 客户端模块
 - `docs/design.md`
 - `docs/api.md`
 - `docs/admin-api.md` 是否需要废弃或迁移说明
@@ -70,7 +70,7 @@
 - 登录成功和失败日志。
 - 管理员禁用或密码更新后 token 失效。
 - 应用授权配置新增、分页列表、修改、删除。
-- Redis `app_auth_{appid}` 同步。
+- dashboard 内部 Redis 授权投影 `app_auth_{appid}` 同步。
 - 应用删除后三个在线服务授权失败。
 - 缓存同步。
 - data-receiver 客户端上报授权成功和失败。

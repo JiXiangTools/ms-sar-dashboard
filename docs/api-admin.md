@@ -8,6 +8,12 @@
 /api/v1/admin
 ```
 
+应用授权校验 API：
+
+```text
+/api/v1/auth/app
+```
+
 后台页面入口：
 
 ```text
@@ -38,6 +44,7 @@ Authorization: Bearer <access_token>
 | `GET` | `/health` | 否 | 健康检查 |
 | `POST` | `/api/v1/admin/auth/login` | 否 | 登录 |
 | `POST` | `/api/v1/admin/auth/logout` | 是 | 退出登录 |
+| `POST` | `/api/v1/auth/app` | 否 | 应用授权校验 |
 | `GET` | `/api/v1/admin/app` | 是 | 应用分页列表 |
 | `POST` | `/api/v1/admin/app` | 是 | 创建应用 |
 | `PUT` | `/api/v1/admin/app/{app_id}` | 是 | 修改应用 |
@@ -201,11 +208,11 @@ DELETE /api/v1/admin/app/{app_id}
 
 校验：
 
-- 读取 Redis `app_auth_{appid}`。
-- key 不存在，失败。
-- `disabled=true`，失败。
-- secret 不匹配，失败。
-- Redis 不可用，失败。
+- 在线服务调用 `POST /api/v1/auth/app`。
+- appid 不存在，失败。
+- 应用已禁用，失败。
+- secret 不存在或不匹配，失败。
+- dashboard 授权接口不可用或超时，失败。
 
 失败响应：
 
@@ -217,6 +224,64 @@ DELETE /api/v1/admin/app/{app_id}
   "request_id": "0000000000000001"
 }
 ```
+
+### 8.1 应用授权校验 API
+
+该接口用于调用方主动校验 `appid + secret` 是否有效。接口本身不要求管理端 JWT，鉴权材料只允许从 JSON body 读取，不从 Query 读取 secret。
+
+```http
+POST /api/v1/auth/app
+Content-Type: application/json
+```
+
+请求：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `appid` | integer | 是 | 应用 ID，必须为正整数 |
+| `secret` | string | 是 | 应用密钥，前后空格会被裁剪 |
+
+示例：
+
+```json
+{
+  "appid": 100001,
+  "secret": "app-secret"
+}
+```
+
+成功响应：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "data": null,
+  "request_id": "0000000000000001"
+}
+```
+
+失败响应：
+
+```json
+{
+  "status": 401,
+  "message": "invalid app authorization",
+  "data": null,
+  "request_id": "0000000000000001"
+}
+```
+
+规则：
+
+- 调用方只根据 JSON `status` 判断结果：`status=200` 为成功，其他值为失败。
+- 校验逻辑读取 dashboard 内部应用授权投影 `app_auth_{appid}`。
+- `appid` 为空、非正整数，或 `secret` 为空时返回失败。
+- appid 不存在、应用已禁用、secret 不匹配时返回失败。
+- 授权投影不可用或读取异常时返回失败，不允许降级为通过。
+- 失败场景包含 appid 不存在、secret 不存在、`appid + secret` 不匹配等业务错误；对外统一返回 `invalid app authorization`。
+- 不写 `t_admin_log`，只走访问日志和错误日志；日志中不得记录 secret 明文。
+- 该接口只做授权校验，不返回应用 secret、名称、备注等管理信息。
 
 ## 9. 审计日志
 

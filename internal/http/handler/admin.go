@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -34,6 +35,11 @@ type updateAppRequest struct {
 	Name   *string `json:"name"`
 	Secret *string `json:"secret"`
 	Remark *string `json:"remark"`
+}
+
+type appAuthorizeRequest struct {
+	AppID  int64  `json:"appid"`
+	Secret string `json:"secret"`
 }
 
 type listAppsQuery struct {
@@ -90,6 +96,27 @@ func (h *AdminHandler) Logout(c *gin.Context) {
 		}
 	}
 	response.Success(c, gin.H{"success": true})
+}
+
+func (h *AdminHandler) AppAuthorize(c *gin.Context) {
+	var req appAuthorizeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+	if req.AppID <= 0 || strings.TrimSpace(req.Secret) == "" {
+		response.Error(c, http.StatusUnauthorized, "invalid app authorization", nil)
+		return
+	}
+	if h.apps == nil {
+		response.Error(c, http.StatusInternalServerError, "internal server error", nil)
+		return
+	}
+	if _, err := h.apps.Authorize(c.Request.Context(), strconv.FormatInt(req.AppID, 10), req.Secret); err != nil {
+		response.Error(c, http.StatusUnauthorized, "invalid app authorization", nil)
+		return
+	}
+	response.Success(c, nil)
 }
 
 func (h *AdminHandler) ListApps(c *gin.Context) {

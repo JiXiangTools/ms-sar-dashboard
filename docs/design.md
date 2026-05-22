@@ -9,10 +9,10 @@
 - 让 `ms-data-receiver`、`ms-rec-online`、`ms-search-online` 用同一套授权方式访问。
 - 给搜索和推荐链路提供只读 debug 页面。
 
-按奥卡姆剃刀，首期只保留一个事实源、一个在线授权源、两种身份：
+按奥卡姆剃刀，首期只保留一个事实源、一个在线授权入口、两种身份：
 
 - PostgreSQL 是管理端事实源：管理员、应用、审计日志都在数据库。
-- Redis 是在线授权源：三个在线服务只读 `app_auth_{appid}`。
+- dashboard 授权 API 是在线服务唯一授权入口；dashboard 内部维护 Redis 授权投影 `app_auth_{appid}`。
 - 管理端身份使用账号密码登录后签发短期 JWT。
 - 在线服务身份使用请求头 `x-dwzauth-appid` + `x-dwzauth-secret`。
 
@@ -33,7 +33,7 @@
   - `x-dwzauth-appid`
   - `x-dwzauth-secret`
   - `x-request-id`
-- 三个在线服务都到 Redis `app_auth_{appid}` 校验 `appid + secret`。
+- 三个在线服务都调用 dashboard `POST /api/v1/auth/app` 校验 `appid + secret`。
 - 提供只读 ES debug 页面，用于查看索引、mapping、文档和执行受控查询。
 - 提供只读推荐 debug 页面，用于调用推荐在线接口并查看返回结果。
 
@@ -58,9 +58,11 @@
                            |   t_app
                            |   t_admin_log
                            v
-                         Redis
+                           | Redis app_auth_{appid}
                            |
-                           | app_auth_{appid}
+                           v
+                  POST /api/v1/auth/app
+                           ^
                            |
         +------------------+------------------+
         |                  |                  |
@@ -71,15 +73,15 @@ ms-data-receiver     ms-rec-online      ms-search-online
 
 1. 管理员在 dashboard 创建或修改应用。
 2. dashboard 写 PostgreSQL。
-3. dashboard 同步 Redis `app_auth_{appid}`。
-4. 三个在线服务收到请求后，只读 Redis 校验授权。
+3. dashboard 同步内部 Redis 授权投影 `app_auth_{appid}`。
+4. 三个在线服务收到请求后，调用 dashboard 授权接口校验。
 
 核心约束：
 
 - PostgreSQL 是后台管理事实源。
-- Redis 是在线服务唯一授权读取源。
-- 在线服务不读 dashboard HTTP 接口，不读 `t_app`，不读本地授权文件。
-- Redis 授权不可用时在线服务不得放行请求。
+- dashboard 授权接口是在线服务唯一授权入口。
+- 在线服务不读 `t_app`，不读 Redis 授权投影，不读本地授权文件。
+- dashboard 授权接口不可用时在线服务不得放行请求。
 
 ## 4. 职责边界
 
@@ -109,7 +111,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 
 - 商品/内容上报。
 - 用户行为上报。
-- 使用统一 Header 从 Redis 校验授权。
+- 使用统一 Header 调用 dashboard 授权接口校验授权。
 - 校验请求并写 Kafka。
 
 移除：
@@ -124,7 +126,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 负责：
 
 - 个性化推荐、热门推荐、相关推荐。
-- 使用统一 Header 从 Redis 校验授权。
+- 使用统一 Header 调用 dashboard 授权接口校验授权。
 - 使用 Header `x-dwzauth-appid` 作为推荐 Redis key 中的 `{appid}`。
 
 移除：
@@ -137,7 +139,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 负责：
 
 - 搜索查询、分页、过滤、排序、高亮。
-- 使用统一 Header 从 Redis 校验授权。
+- 使用统一 Header 调用 dashboard 授权接口校验授权。
 - 使用 Header `x-dwzauth-appid` 路由到 ES 索引。
 
 移除：
@@ -300,15 +302,15 @@ app_auth_{appid}
 - 删除应用：写数据库 `disabled=true`，成功后删除 Redis key。
 - Redis 同步失败时，管理端操作返回失败；避免数据库成功但在线授权未更新。
 
-在线校验规则：
+dashboard 授权 API 校验规则：
 
 1. 从 Header 读取 `x-dwzauth-appid`、`x-dwzauth-secret`、`x-request-id`。
 2. 校验 appid 为正整数，secret 非空。
-3. 读取 Redis `app_auth_{appid}`。
-4. key 不存在则失败。
+3. 读取 dashboard 内部 Redis 授权投影 `app_auth_{appid}`。
+4. appid 不存在则失败。
 5. `disabled=true` 则失败。
 6. secret 不一致则失败。
-7. Redis 错误则失败，不放行。
+7. 授权投影读取错误则失败，不放行。
 
 失败响应统一：
 
@@ -320,6 +322,63 @@ app_auth_{appid}
   "request_id": "0000000000000001"
 }
 ```
+
+### 7.1 应用授权校验 API
+
+dashboard 增加一个对外授权校验接口，用于调用方以 HTTP 方式验证 `appid + secret` 是否有效。该接口只做校验，不创建会话，不返回应用资料，不替代应用管理接口。
+
+```http
+POST /api/v1/auth/app
+Content-Type: application/json
+```
+
+请求体：
+
+```json
+{
+  "appid": 100001,
+  "secret": "app-secret"
+}
+```
+
+成功响应：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "data": null,
+  "request_id": "0000000000000001"
+}
+```
+
+失败响应：
+
+```json
+{
+  "status": 401,
+  "message": "invalid app authorization",
+  "data": null,
+  "request_id": "0000000000000001"
+}
+```
+
+处理流程：
+
+1. 只接受 JSON body 中的 `appid` 和 `secret`，不从 Query 读取 secret。
+2. 校验 `appid` 为正整数，`secret` 非空。
+3. 读取 dashboard 内部 Redis 授权投影 `app_auth_{appid}`。
+4. appid 不存在、`disabled=true`、secret 为空或 secret 不一致时返回失败。
+5. 授权投影不可用或读取异常时返回失败，不降级读取数据库。
+6. 调用方只根据 JSON `status` 判断结果：`status=200` 为成功，其他值为失败。
+7. 成功和失败响应的 `data` 都返回 `null`，不返回 secret、应用名或备注。
+8. appid 不存在、secret 不存在、`appid + secret` 不匹配等业务错误都返回失败，并统一使用 `invalid app authorization`。
+
+日志要求：
+
+- 不写 `t_admin_log`，因为该接口不是管理员操作。
+- 访问日志可记录 `appid`、status、request_id、cost_ms。
+- 任何日志不得记录 secret 明文。
 
 ## 8. 管理端登录
 
@@ -460,8 +519,9 @@ UI 规则：
 - 应用 secret 不写日志。
 - 管理端 token 不写数据库和 Redis。
 - 三个在线服务不得继续使用固定 `x-dwz-auth` 或本地静态 token。
-- 三个在线服务只通过 Redis `app_auth_{appid}` 授权。
-- Redis 授权失败或 Redis 不可用时不得放行。
+- 三个在线服务只通过 dashboard 授权接口授权。
+- 应用授权校验 API 只从 JSON body 读取 secret，不允许 Query 传递 secret。
+- dashboard 授权失败或授权接口不可用时不得放行。
 - ES Debug 只允许只读操作。
 - 推荐 Debug 只允许调用推荐查询接口，不提供 Redis key 直查、写入或删除能力。
 
@@ -472,8 +532,9 @@ UI 规则：
 - dashboard 可新增、分页查询、修改、删除应用。
 - 应用创建、修改、删除后 Redis `app_auth_{appid}` 与数据库一致。
 - `ms-data-receiver`、`ms-rec-online`、`ms-search-online` 都使用 `x-dwzauth-appid`、`x-dwzauth-secret`、`x-request-id`。
-- 三个在线服务都只从 Redis 校验授权。
+- 三个在线服务都只调用 dashboard 授权接口校验授权。
 - 删除应用后，三个在线服务授权失败。
+- `POST /api/v1/auth/app` 可通过 `appid + secret` 返回授权成功或失败。
 - ES Debug 可查看索引、mapping、settings、count、单文档，并执行受控只读查询。
 - 推荐 Debug 可调用 hot、related、personalized 三类推荐接口并展示返回结果。
 - 管理端写操作和 debug 操作都有审计日志。

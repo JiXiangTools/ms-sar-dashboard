@@ -11,11 +11,12 @@ func TestAdminAPIDocumentContainsCoreContract(t *testing.T) {
 	required := []string{
 		"/api/v1/admin/auth/login",
 		"/api/v1/admin/app",
+		"/api/v1/auth/app",
 		"/api/v1/admin/debug/es/index/{appid}",
 		"/api/v1/admin/debug/rec",
 		"x-dwzauth-appid",
 		"x-dwzauth-secret",
-		"app_auth_{appid}",
+		"dashboard 授权",
 	}
 
 	for _, value := range required {

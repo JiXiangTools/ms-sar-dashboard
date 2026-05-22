@@ -6,7 +6,7 @@
 
 - 登录、管理员账号、应用授权配置全部归属本项目，并通过数据库持久化。
 - 授权应用统一供 `ms-data-receiver`、`ms-rec-online`、`ms-search-online` 使用。
-- 三个在线服务统一使用请求头 `x-dwzauth-appid`、`x-dwzauth-secret`、`x-request-id`，并到 Redis `app_auth_{appid}` 校验 `appid + secret`。
+- 三个在线服务统一使用请求头 `x-dwzauth-appid`、`x-dwzauth-secret`、`x-request-id`，并调用 dashboard `POST /api/v1/auth/app` 校验 `appid + secret`。
 - `ms-data-receiver` 不再保存管理员账号、登录配置或应用配置文件，只在客户端上报时使用授权信息。
 - 客户端上报链路仍由 `ms-data-receiver` 负责：校验授权、校验商品/行为数据、写 Kafka。
 - 后台管理链路由 `ms-sar-dashboard` 负责：登录、token、管理员、应用授权配置、审计和后续搜广推运营管理页面。
@@ -34,17 +34,17 @@
 目标状态：
 
 - dashboard 管理员登录依赖 PostgreSQL，不再从配置文件读取管理员账号密码。
-- dashboard 管理应用授权，并同步 Redis `app_auth_{appid}`。
+- dashboard 管理应用授权，同步内部 Redis 授权投影，并提供 `POST /api/v1/auth/app` 校验接口。
 - `ms-data-receiver`、`ms-rec-online`、`ms-search-online` 统一使用 `x-dwzauth-appid`、`x-dwzauth-secret`、`x-request-id`。
-- 三个在线服务只从 Redis 校验授权，旧 `data/apps.json`、固定 `x-dwz-auth`、固定 `app.appid` 不再作为线上授权来源。
+- 三个在线服务只调用 dashboard 授权接口，旧 `data/apps.json`、固定 `x-dwz-auth`、固定 `app.appid` 不再作为线上授权来源。
 
 服务改造：
 
 | 服务 | 当前授权 | 目标授权 |
 | --- | --- | --- |
-| `ms-data-receiver` | `data/apps.json` + `x-dwzauth-appid/secret` | Redis `app_auth_{appid}` + 统一 Header |
-| `ms-rec-online` | 固定 `x-dwz-auth`，appid 来自配置 | Redis `app_auth_{appid}` + 统一 Header |
-| `ms-search-online` | 固定 `x-dwz-auth` / allowed appids，请求体 appid | Redis `app_auth_{appid}` + 统一 Header |
+| `ms-data-receiver` | `data/apps.json` + `x-dwzauth-appid/secret` | dashboard 授权 API + 统一 Header |
+| `ms-rec-online` | 固定 `x-dwz-auth`，appid 来自配置 | dashboard 授权 API + 统一 Header |
+| `ms-search-online` | 固定 `x-dwz-auth` / allowed appids，请求体 appid | dashboard 授权 API + 统一 Header |
 
 历史 `apps.json` 迁移到 `t_app` 时保留原 `appid` 和 `secret`，并在导入后调整 `t_app_id_seq` 到历史最大 appid 之后：
 
@@ -61,7 +61,7 @@
 
 1. 部署 dashboard 数据库和 Redis 配置。
 2. 初始化管理员。
-3. 迁移 `ms-data-receiver/data/apps.json`，校验 Redis `app_auth_{appid}`。
+3. 迁移 `ms-data-receiver/data/apps.json`，校验 dashboard `POST /api/v1/auth/app`。
 4. 切换 `ms-data-receiver`，保持商品/行为上报 API 和 Kafka 消息格式不变。
 5. 切换 `ms-rec-online`，appid 改为来自 `x-dwzauth-appid`，推荐 Redis key 使用 Header appid。
 6. 切换 `ms-search-online`，ES 索引使用 Header appid 路由；如短期保留请求体 appid，必须与 Header appid 一致。
@@ -73,12 +73,12 @@
 - 切换前备份 `data/apps.json`。
 - 保留三个在线服务旧版本镜像。
 - 回滚期间禁止同时在旧 data-receiver 后台和 dashboard 修改应用。
-- 如果 Redis 授权异常，回滚在线服务到旧授权版本。
+- 如果 dashboard 授权接口异常，回滚在线服务到旧授权版本。
 
 验收清单：
 
 - dashboard：登录成功/失败、登录日志、应用创建/列表/修改/删除、Redis 同步、审计日志脱敏。
-- data-receiver：统一 Header 授权成功，secret 错误、应用删除、Redis 不可用时失败，Kafka 消息格式不变。
+- data-receiver：统一 Header 授权成功，secret 错误、应用删除、dashboard 授权接口不可用时失败，Kafka 消息格式不变。
 - rec-online：统一 Header 授权成功，推荐 Redis key 使用 Header appid，推荐响应格式不变。
 - search-online：统一 Header 授权成功，ES 索引使用 Header appid，搜索响应格式不变。
 - debug：ES Debug 和推荐 Debug 只读，操作写审计日志。
@@ -153,7 +153,7 @@ python3 ./test/test-action-upload.py
 
 - `test/test-items-upload.py` 调用 `POST /api/v1/msdr/product/report`，批量写入覆盖核心字段的商品/内容样例。
 - `test/test-action-upload.py` 调用 `POST /api/v1/msdr/behavior/report`，写入覆盖全部当前 `event_type`、设备上下文、用户/session/匿名身份和行为扩展属性的用户行为样例。
-- 运行前需确保 `ms-sar-dashboard` 已将对应 `DWZ_APPID` / `DWZ_APP_SECRET` 同步到 data-receiver 使用的 Redis 授权投影。
+- 运行前需确保 `ms-sar-dashboard` 已创建对应 `DWZ_APPID` / `DWZ_APP_SECRET`，并且 `POST /api/v1/auth/app` 可以校验通过。
 - 如果 `ms-data-receiver` 客户端上报 API 的路径、Header、字段、枚举或批量限制发生修改，必须同步更新这两个脚本，避免联调和验收数据与真实接口契约脱节。
 
 ## 容器与打包
