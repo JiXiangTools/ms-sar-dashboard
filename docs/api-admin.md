@@ -280,27 +280,24 @@ POST /api/v1/admin/debug/rec
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `type` | string | 是 | `hot`、`related`、`personalized`、`key` |
+| `type` | string | 是 | `hot`、`related`、`personalized` |
 | `appid` | string | 是 | 应用 ID |
 | `item_id` | string | 否 | 相关推荐使用 |
 | `user_id` | string | 否 | 个性化使用 |
-| `period` | string | 否 | 热门使用：`hour`、`day`、`week` |
-| `key` | string | 否 | 直接查看 Redis key |
+| `period` | string | 否 | 仅热门使用：`hour`、`day`、`week`，默认 `day` |
 | `size` | integer | 否 | 默认 `20` |
 | `exclude` | array | 否 | 排除 item_id |
 
 返回：
 
-- 实际读取的 Redis key。
-- key 是否存在。
-- 原始候选数量。
-- 解析成功数量。
-- 被过滤原因。
-- 最终截断结果。
+- 实际调用的推荐接口路径。
+- 透传给推荐接口的参数。
+- 推荐接口返回的 `item_ids` 和 `size`。
+- 推荐接口原始响应。
 
 限制：
 
-- 只读 Redis。
-- 不删除 key。
+- 从 dashboard Redis 授权投影读取应用 Secret，再调用 `ms-rec-online` 推荐接口。
+- 不提供直接输入 Redis key 的调试入口。
 - 不写候选结果。
-- 不保证复制 `ms-rec-online` 的所有未来排序细节。
+- 推荐排序、召回和兜底逻辑以 `ms-rec-online` 当前接口为准。

@@ -59,23 +59,20 @@ type RecDebugRequest struct {
 	ItemID  string   `json:"item_id"`
 	UserID  string   `json:"user_id"`
 	Period  string   `json:"period"`
-	Key     string   `json:"key"`
 	Size    int      `json:"size"`
 	Exclude []string `json:"exclude"`
 }
 
 type RecDebugResult struct {
-	Type            string         `json:"type"`
-	AppID           string         `json:"appid"`
-	Key             string         `json:"key"`
-	Exists          bool           `json:"exists"`
-	KeyType         string         `json:"key_type,omitempty"`
-	RawCount        int            `json:"raw_count"`
-	ParsedCount     int            `json:"parsed_count"`
-	FilteredCount   int            `json:"filtered_count"`
-	FinalCount      int            `json:"final_count"`
-	FilteredReasons map[string]int `json:"filtered_reasons,omitempty"`
-	Items           []RecItem      `json:"items"`
+	Type     string         `json:"type"`
+	AppID    string         `json:"appid"`
+	Endpoint string         `json:"endpoint"`
+	Params   map[string]any `json:"params"`
+	Status   int            `json:"status"`
+	Message  string         `json:"message"`
+	ItemIDs  []string       `json:"item_ids"`
+	Size     int            `json:"size"`
+	Raw      any            `json:"raw,omitempty"`
 }
 
 type RecItem struct {

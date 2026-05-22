@@ -82,8 +82,10 @@ type ElasticsearchConfig struct {
 }
 
 type RecommendDebugConfig struct {
-	MaxCandidateLimit int  `mapstructure:"max_candidate_limit"`
-	DebugEnabled      bool `mapstructure:"debug_enabled"`
+	MaxCandidateLimit int           `mapstructure:"max_candidate_limit"`
+	DebugEnabled      bool          `mapstructure:"debug_enabled"`
+	OnlineBaseURL     string        `mapstructure:"online_base_url"`
+	RequestTimeout    time.Duration `mapstructure:"request_timeout"`
 }
 
 func Load(path string, environment string) (Config, error) {
@@ -164,6 +166,8 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("recommend_debug.max_candidate_limit", 1000)
 	v.SetDefault("recommend_debug.debug_enabled", true)
+	v.SetDefault("recommend_debug.online_base_url", "http://127.0.0.1:18082")
+	v.SetDefault("recommend_debug.request_timeout", "5s")
 }
 
 func detectEnvironment(value string) string {

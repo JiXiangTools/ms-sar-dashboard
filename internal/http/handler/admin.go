@@ -56,7 +56,6 @@ type debugRecRequest struct {
 	ItemID  string   `json:"item_id"`
 	UserID  string   `json:"user_id"`
 	Period  string   `json:"period"`
-	Key     string   `json:"key"`
 	Size    int      `json:"size"`
 	Exclude []string `json:"exclude"`
 }
@@ -251,7 +250,6 @@ func (h *AdminHandler) RecDebug(c *gin.Context) {
 		ItemID:  req.ItemID,
 		UserID:  req.UserID,
 		Period:  req.Period,
-		Key:     req.Key,
 		Size:    req.Size,
 		Exclude: req.Exclude,
 	})

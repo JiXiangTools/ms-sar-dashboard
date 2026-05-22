@@ -40,6 +40,7 @@ func TestAdminUIEndpointServesLoginEntry(t *testing.T) {
 		"ms-sar-dashboard / sar-admin",
 		`<body class="auth-backdrop-open auth-modal-open">`,
 		`id="login-form"`,
+		`id="close-login-modal" aria-label="关闭登录弹框" disabled`,
 		`id="secret-reveal-panel"`,
 		`role="dialog"`,
 		"管理员登录",
@@ -82,11 +83,24 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 		`secret-reveal-panel`,
 		`regenerate-app-secret`,
 		`copy-secret`,
+		`const showLogin = !loggedIn;`,
+		`closeLoginButton.disabled = !loggedIn`,
+		`id="rec-debug-type"`,
+		`data-rec-field="period"`,
+		`/api/v1/admin/debug/rec`,
 		`连接服务失败，请确认 sar-admin 服务已启动，并刷新页面后重试。`,
 	}
 	for _, value := range required {
 		if !strings.Contains(body, value) {
 			t.Fatalf("expected app script to contain %q", value)
+		}
+	}
+	if strings.Contains(body, `const showLogin = !loggedIn && state.loginOpen;`) {
+		t.Fatalf("expected login modal to be mandatory when there is no session")
+	}
+	for _, value := range []string{`<option value="key">`, `Redis Key`, `key: String(values.key`} {
+		if strings.Contains(body, value) {
+			t.Fatalf("expected app script to remove redis key debug option %q", value)
 		}
 	}
 

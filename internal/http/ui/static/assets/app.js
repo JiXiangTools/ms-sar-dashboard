@@ -62,7 +62,13 @@ const state = {
   debug: {
     esMode: "index",
     esResult: "等待查询结果。",
-    recResult: "等待查询结果。"
+    recResult: "等待查询结果。",
+    recType: "hot",
+    recDraft: {
+      type: "hot",
+      period: "day",
+      size: "20"
+    }
   }
 };
 
@@ -70,6 +76,7 @@ const loginForm = document.getElementById("login-form");
 const loginNameInput = document.getElementById("login-name");
 const loginPasswordInput = document.getElementById("login-password");
 const loginButton = document.getElementById("open-login-button");
+const closeLoginButton = document.getElementById("close-login-modal");
 const sessionPanel = document.getElementById("session-panel");
 const sessionName = document.getElementById("session-name");
 const logoutButton = document.getElementById("logout-button");
@@ -307,11 +314,13 @@ async function loadActiveView(force = false) {
 
 function renderAuth() {
   const loggedIn = hasSession();
-  const showLogin = !loggedIn && state.loginOpen;
+  const showLogin = !loggedIn;
   document.body.classList.toggle("auth-backdrop-open", showLogin);
   document.body.classList.toggle("auth-modal-open", showLogin);
   loginForm.classList.toggle("hidden", !showLogin);
   loginButton.classList.toggle("hidden", loggedIn || showLogin);
+  closeLoginButton.classList.toggle("hidden", !loggedIn);
+  closeLoginButton.disabled = !loggedIn;
   sessionPanel.classList.toggle("hidden", !loggedIn);
   sessionName.textContent = state.adminName || "已登录";
 
@@ -638,6 +647,33 @@ function renderESDebug() {
 }
 
 function renderRecDebug() {
+  const draft = state.debug.recDraft || {};
+  const recType = state.debug.recType || draft.type || "hot";
+  const period = draft.period || "day";
+  const typeSpecificRows = {
+    hot: `
+          <label class="form-row" data-rec-field="period">
+            <span class="form-label">周期</span>
+            <select name="period">
+              <option value="hour" ${period === "hour" ? "selected" : ""}>hour</option>
+              <option value="day" ${period === "day" ? "selected" : ""}>day</option>
+              <option value="week" ${period === "week" ? "selected" : ""}>week</option>
+            </select>
+          </label>
+    `,
+    related: `
+          <label class="form-row" data-rec-field="item_id">
+            <span class="form-label">Item ID</span>
+            <input name="item_id" type="text" value="${escapeHTML(draft.item_id || "")}" required />
+          </label>
+    `,
+    personalized: `
+          <label class="form-row" data-rec-field="user_id">
+            <span class="form-label">User ID</span>
+            <input name="user_id" type="text" value="${escapeHTML(draft.user_id || "")}" required />
+          </label>
+    `
+  };
   formPanel.classList.add("hidden");
   panelContent.innerHTML = `
     <div class="debug-layout">
@@ -645,40 +681,24 @@ function renderRecDebug() {
         <div class="form-grid">
           <label class="form-row">
             <span class="form-label">类型</span>
-            <select name="type">
-              <option value="hot">hot</option>
-              <option value="related">related</option>
-              <option value="personalized">personalized</option>
-              <option value="key">key</option>
+            <select id="rec-debug-type" name="type">
+              <option value="hot" ${recType === "hot" ? "selected" : ""}>hot</option>
+              <option value="related" ${recType === "related" ? "selected" : ""}>related</option>
+              <option value="personalized" ${recType === "personalized" ? "selected" : ""}>personalized</option>
             </select>
           </label>
           <label class="form-row">
             <span class="form-label">AppID</span>
-            <input name="appid" type="text" required />
+            <input name="appid" type="text" value="${escapeHTML(draft.appid || "")}" required />
           </label>
-          <label class="form-row">
-            <span class="form-label">Item ID</span>
-            <input name="item_id" type="text" />
-          </label>
-          <label class="form-row">
-            <span class="form-label">User ID</span>
-            <input name="user_id" type="text" />
-          </label>
-          <label class="form-row">
-            <span class="form-label">Period</span>
-            <input name="period" type="text" placeholder="hour / day / week" />
-          </label>
+          ${typeSpecificRows[recType] || typeSpecificRows.hot}
           <label class="form-row">
             <span class="form-label">Size</span>
-            <input name="size" type="number" min="1" value="20" />
-          </label>
-          <label class="form-row wide">
-            <span class="form-label">Redis Key</span>
-            <input name="key" type="text" />
+            <input name="size" type="number" min="1" value="${escapeHTML(draft.size || "20")}" />
           </label>
           <label class="form-row wide">
             <span class="form-label">排除 Item</span>
-            <textarea name="exclude"></textarea>
+            <textarea name="exclude">${escapeHTML(draft.exclude || "")}</textarea>
           </label>
         </div>
         <div class="form-actions">
@@ -704,6 +724,15 @@ function renderWorkspace() {
 
 function readFormData(form) {
   return Object.fromEntries(new FormData(form).entries());
+}
+
+function syncRecDebugDraft(form) {
+  const values = readFormData(form);
+  state.debug.recDraft = {
+    ...(state.debug.recDraft || {}),
+    ...values
+  };
+  state.debug.recType = String(values.type || state.debug.recType || "hot");
 }
 
 function openAppForm(mode, appID = 0) {
@@ -825,13 +854,11 @@ async function submitESDebug(form) {
 
 async function submitRecDebug(form) {
   const values = readFormData(form);
+  syncRecDebugDraft(form);
+  const type = String(values.type || "").trim();
   const payload = {
-    type: String(values.type || "").trim(),
+    type,
     appid: String(values.appid || "").trim(),
-    item_id: String(values.item_id || "").trim(),
-    user_id: String(values.user_id || "").trim(),
-    period: String(values.period || "").trim(),
-    key: String(values.key || "").trim(),
     size: Number(values.size || 20),
     exclude: String(values.exclude || "")
       .split(/[\n,]/)
@@ -842,6 +869,25 @@ async function submitRecDebug(form) {
     state.debug.recResult = "类型和 AppID 不能为空。";
     renderWorkspace();
     return;
+  }
+  if (type === "hot") {
+    payload.period = String(values.period || "day").trim();
+  }
+  if (type === "related") {
+    payload.item_id = String(values.item_id || "").trim();
+    if (!payload.item_id) {
+      state.debug.recResult = "related 需要填写 Item ID。";
+      renderWorkspace();
+      return;
+    }
+  }
+  if (type === "personalized") {
+    payload.user_id = String(values.user_id || "").trim();
+    if (!payload.user_id) {
+      state.debug.recResult = "personalized 需要填写 User ID。";
+      renderWorkspace();
+      return;
+    }
   }
 
   state.debug.recResult = "查询中...";
@@ -859,7 +905,15 @@ async function submitRecDebug(form) {
 }
 
 function bindAuthEvents() {
-  document.getElementById("close-login-modal").addEventListener("click", () => {
+  closeLoginButton.addEventListener("click", () => {
+    if (!hasSession()) {
+      state.loginOpen = true;
+      state.loginError = "";
+      setFeedback("请先登录后查看数据。");
+      renderWorkspace();
+      loginNameInput.focus();
+      return;
+    }
     state.loginOpen = false;
     state.loginError = "";
     setFeedback("请先登录后查看数据。");
@@ -1035,6 +1089,24 @@ function bindWorkspaceEvents() {
     }
     if (event.target.id === "rec-debug-form") {
       submitRecDebug(event.target);
+    }
+  });
+
+  panelContent.addEventListener("input", (event) => {
+    const form = event.target.closest("#rec-debug-form");
+    if (form) {
+      syncRecDebugDraft(form);
+    }
+  });
+
+  panelContent.addEventListener("change", (event) => {
+    const form = event.target.closest("#rec-debug-form");
+    if (!form) {
+      return;
+    }
+    syncRecDebugDraft(form);
+    if (event.target.name === "type") {
+      renderWorkspace();
     }
   });
 

@@ -35,7 +35,7 @@
   - `x-request-id`
 - 三个在线服务都到 Redis `app_auth_{appid}` 校验 `appid + secret`。
 - 提供只读 ES debug 页面，用于查看索引、mapping、文档和执行受控查询。
-- 提供只读推荐 debug 页面，用于查看推荐 Redis key、候选和过滤原因。
+- 提供只读推荐 debug 页面，用于调用推荐在线接口并查看返回结果。
 
 非目标：
 
@@ -196,13 +196,15 @@ elasticsearch:
 recommend_debug:
   max_candidate_limit: 1000
   debug_enabled: true
+  online_base_url: http://127.0.0.1:18082
+  request_timeout: 5s
 ```
 
 说明：
 
 - 管理员初始账号通过 SQL seed 写入数据库，不在配置文件中放明文密码。
-- dashboard 使用同一个 Redis 连接同步应用授权和读取推荐 debug 数据。
-- 如推荐 Redis 与授权 Redis 不是同一套实例，再增加独立 Redis 配置；首期不预设复杂拓扑。
+- dashboard 使用 Redis 同步应用授权；推荐 Debug 从授权投影读取 Secret 后调用 `ms-rec-online`。
+- `recommend_debug.online_base_url` 指向推荐在线服务，默认匹配 `services-deploy/search-rec-ad` 的本地端口。
 
 ## 6. 数据模型
 
@@ -404,27 +406,25 @@ ms_search_product_{appid}_v1
 
 ## 11. 推荐 Debug
 
-推荐 Debug 是只读工具，首期不复制完整推荐引擎，只解释 Redis 中能看到的推荐数据。
+推荐 Debug 是只读工具，不复制推荐引擎逻辑。页面按类型调用 `ms-rec-online` 的推荐接口，推荐排序、召回和兜底逻辑以线上推荐服务为准。
 
 支持：
 
-- 查看热门 key：`hot_{appid}_hour/day/week`。
-- 查看相似 key：`icf_{appid}_{item_id}`、`ir_{appid}_{item_id}`、`nl_{appid}_{item_id}`。
-- 查看用户行为 key：`ck/vw/ft/lk_{appid}_{user_id}`。
-- 解析推荐 value：`{item_id}:{score},{item_id}:{score}`。
-- 展示候选数量、非法条目、重复 item、exclude 过滤、最终截断结果。
+- 热门推荐：调用 `/api/v1/msrec/recommend/hot`，只有选择 `hot` 时才展示并传递 `hour`、`day`、`week`。
+- 相关推荐：调用 `/api/v1/msrec/recommend/related`。
+- 个性化推荐：调用 `/api/v1/msrec/recommend/personalized`。
+- 展示推荐接口路径、请求参数、返回 item 列表和原始响应。
 
 不做：
 
-- 不写 Redis。
-- 不删除 Redis key。
+- 不提供直接输入 Redis key 的入口。
+- 不写 Redis 或删除 Redis key。
 - 不训练模型。
-- 不保证与 `ms-rec-online` 未来所有排序细节完全一致；如需精确线上 trace，应在 `ms-rec-online` 增加专门 debug endpoint。
 
 审计：
 
 - 每次推荐 debug 写 `t_admin_log`。
-- 日志记录 appid、debug_type、key_count、candidate_count、result_count、request_id、cost_ms、success、error。
+- 日志记录 appid、debug_type、endpoint、result_count、request_id、cost_ms、success、error。
 - 不记录完整候选列表到审计日志。
 
 ## 12. 管理端 UI
@@ -463,7 +463,7 @@ UI 规则：
 - 三个在线服务只通过 Redis `app_auth_{appid}` 授权。
 - Redis 授权失败或 Redis 不可用时不得放行。
 - ES Debug 只允许只读操作。
-- 推荐 Debug 只允许只读 Redis。
+- 推荐 Debug 只允许调用推荐查询接口，不提供 Redis key 直查、写入或删除能力。
 
 ## 14. 验收标准
 
@@ -475,5 +475,5 @@ UI 规则：
 - 三个在线服务都只从 Redis 校验授权。
 - 删除应用后，三个在线服务授权失败。
 - ES Debug 可查看索引、mapping、settings、count、单文档，并执行受控只读查询。
-- 推荐 Debug 可查看并解析推荐 Redis key。
+- 推荐 Debug 可调用 hot、related、personalized 三类推荐接口并展示返回结果。
 - 管理端写操作和 debug 操作都有审计日志。

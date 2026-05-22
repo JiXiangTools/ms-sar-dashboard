@@ -40,27 +40,3 @@ func clampSize(size int, max int) int {
 	}
 	return size
 }
-
-func deriveDebugKey(debugType string, appID string, itemID string, userID string, period string, explicit string) string {
-	if trimmed := strings.TrimSpace(explicit); trimmed != "" {
-		return trimmed
-	}
-	switch strings.ToLower(strings.TrimSpace(debugType)) {
-	case "hot":
-		p := strings.TrimSpace(period)
-		if p == "" {
-			p = "day"
-		}
-		return fmt.Sprintf("hot_%s_%s", appID, p)
-	case "related":
-		if itemID != "" {
-			return fmt.Sprintf("icf_%s_%s", appID, itemID)
-		}
-	case "personalized":
-		if userID != "" {
-			return fmt.Sprintf("ck_%s_%s", appID, userID)
-		}
-	case "key":
-	}
-	return ""
-}

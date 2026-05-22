@@ -2,8 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +19,7 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/elasticsearch"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/requestid"
 )
 
 type DebugService struct {
@@ -139,125 +144,205 @@ func (s *DebugService) Recommend(ctx context.Context, adminID int64, req RecDebu
 	if s.redis == nil {
 		return RecDebugResult{}, apperror.Internal("redis client is not configured", nil)
 	}
-	size := clampSize(req.Size, s.cfg.RecommendDebug.MaxCandidateLimit)
-	key := deriveDebugKey(req.Type, req.AppID, req.ItemID, req.UserID, req.Period, req.Key)
-	if key == "" {
-		return RecDebugResult{}, apperror.BadRequest("invalid debug key", nil)
+	if strings.TrimSpace(s.cfg.RecommendDebug.OnlineBaseURL) == "" {
+		return RecDebugResult{}, apperror.Internal("recommend online base url is not configured", nil)
 	}
-	result, err := s.readRecommendKey(ctx, key, size, req.Exclude)
+
+	size := clampSize(req.Size, s.cfg.RecommendDebug.MaxCandidateLimit)
+	endpoint, params, query, err := buildRecommendDebugRequest(req, size)
+	if err != nil {
+		return RecDebugResult{}, err
+	}
+
+	secret, err := s.recommendAppSecret(ctx, req.AppID)
+	if err != nil {
+		return RecDebugResult{}, err
+	}
+	targetURL, err := s.recommendURL(endpoint, query)
+	if err != nil {
+		return RecDebugResult{}, err
+	}
+
+	result, err := s.callRecommendOnline(ctx, targetURL, secret, req.AppID)
 	if err != nil {
 		_ = s.audit.Record(ctx, adminID, "REC_DEBUG", "VIEW", map[string]any{
-			"appid":   req.AppID,
-			"key":     key,
-			"success": false,
-			"error":   err.Error(),
+			"appid":    req.AppID,
+			"type":     strings.ToLower(strings.TrimSpace(req.Type)),
+			"endpoint": endpoint,
+			"success":  false,
+			"error":    err.Error(),
 		})
-		return RecDebugResult{}, apperror.Internal("recommend debug failed", err)
+		return RecDebugResult{}, err
 	}
-	result.Type = req.Type
+	result.Type = strings.ToLower(strings.TrimSpace(req.Type))
 	result.AppID = req.AppID
-	result.Key = key
+	result.Endpoint = endpoint
+	result.Params = params
 	_ = s.audit.Record(ctx, adminID, "REC_DEBUG", "VIEW", map[string]any{
-		"appid":          req.AppID,
-		"key":            key,
-		"raw_count":      result.RawCount,
-		"parsed_count":   result.ParsedCount,
-		"filtered_count": result.FilteredCount,
-		"final_count":    result.FinalCount,
-		"success":        true,
+		"appid":       req.AppID,
+		"type":        result.Type,
+		"endpoint":    endpoint,
+		"final_count": result.Size,
+		"success":     true,
 	})
 	logx.Info(s.logger, ctx, startedAt, "rec_debug.view", "recommend debug",
 		logx.Int64("admin_id", adminID),
 		logx.String("appid", req.AppID),
-		logx.String("key", key),
-		logx.Int("final_count", result.FinalCount),
+		logx.String("type", result.Type),
+		logx.String("endpoint", endpoint),
+		logx.Int("final_count", result.Size),
 	)
 	return result, nil
 }
 
-func (s *DebugService) readRecommendKey(ctx context.Context, key string, size int, exclude []string) (RecDebugResult, error) {
-	kind, err := s.redis.Type(ctx, key).Result()
-	if err != nil {
-		return RecDebugResult{}, err
-	}
-	if kind == "none" {
-		return RecDebugResult{Exists: false, KeyType: kind}, nil
-	}
-	value, err := s.redis.Get(ctx, key).Result()
-	if err != nil {
-		return RecDebugResult{}, err
-	}
-	items, rawCount, parsedCount, filteredCount, reasons := parseRecommendValue(value, size, exclude)
-	return RecDebugResult{
-		Exists:          true,
-		KeyType:         kind,
-		RawCount:        rawCount,
-		ParsedCount:     parsedCount,
-		FilteredCount:   filteredCount,
-		FinalCount:      len(items),
-		FilteredReasons: reasons,
-		Items:           items,
-	}, nil
-}
-
-func parseRecommendValue(value string, size int, exclude []string) ([]RecItem, int, int, int, map[string]int) {
-	seen := map[string]struct{}{}
-	excluded := make(map[string]struct{}, len(exclude))
-	for _, item := range exclude {
-		trimmed := strings.TrimSpace(item)
-		if trimmed != "" {
-			excluded[trimmed] = struct{}{}
-		}
+func buildRecommendDebugRequest(req RecDebugRequest, size int) (string, map[string]any, url.Values, error) {
+	debugType := strings.ToLower(strings.TrimSpace(req.Type))
+	if strings.TrimSpace(req.AppID) == "" {
+		return "", nil, nil, apperror.BadRequest("appid is required", nil)
 	}
 
-	tokens := strings.Split(value, ",")
-	rawCount := 0
-	parsedCount := 0
-	filteredCount := 0
-	reasons := map[string]int{}
-	items := make([]RecItem, 0, len(tokens))
+	params := map[string]any{"size": size}
+	query := url.Values{}
+	query.Set("size", strconv.Itoa(size))
 
-	for _, token := range tokens {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			continue
-		}
-		rawCount++
-		parts := strings.SplitN(token, ":", 2)
-		itemID := strings.TrimSpace(parts[0])
-		if itemID == "" {
-			filteredCount++
-			reasons["empty_item_id"]++
-			continue
-		}
-		if _, ok := excluded[itemID]; ok {
-			filteredCount++
-			reasons["excluded"]++
-			continue
-		}
-		if _, ok := seen[itemID]; ok {
-			filteredCount++
-			reasons["duplicate"]++
-			continue
-		}
-		score := 0.0
-		if len(parts) == 2 {
-			if parsed, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil {
-				score = parsed
+	if len(req.Exclude) > 0 {
+		exclude := make([]string, 0, len(req.Exclude))
+		for _, item := range req.Exclude {
+			if trimmed := strings.TrimSpace(item); trimmed != "" {
+				exclude = append(exclude, trimmed)
 			}
 		}
-		items = append(items, RecItem{
-			ItemID: itemID,
-			Score:  score,
-			Raw:    token,
-		})
-		seen[itemID] = struct{}{}
-		parsedCount++
-		if size > 0 && len(items) >= size {
-			break
+		if len(exclude) > 0 {
+			params["exclude"] = exclude
+			query.Set("exclude", strings.Join(exclude, ","))
 		}
 	}
-	return items, rawCount, parsedCount, filteredCount, reasons
+
+	switch debugType {
+	case "hot":
+		period := strings.TrimSpace(req.Period)
+		if period == "" {
+			period = "day"
+		}
+		if period != "hour" && period != "day" && period != "week" {
+			return "", nil, nil, apperror.BadRequest("invalid hot period", nil)
+		}
+		params["period"] = period
+		query.Set("period", period)
+		return "/api/v1/msrec/recommend/hot", params, query, nil
+	case "related":
+		itemID := strings.TrimSpace(req.ItemID)
+		if itemID == "" {
+			return "", nil, nil, apperror.BadRequest("item_id is required", nil)
+		}
+		params["item_id"] = itemID
+		query.Set("item_id", itemID)
+		return "/api/v1/msrec/recommend/related", params, query, nil
+	case "personalized":
+		userID := strings.TrimSpace(req.UserID)
+		if userID == "" {
+			return "", nil, nil, apperror.BadRequest("user_id is required", nil)
+		}
+		params["user_id"] = userID
+		query.Set("user_id", userID)
+		return "/api/v1/msrec/recommend/personalized", params, query, nil
+	default:
+		return "", nil, nil, apperror.BadRequest("invalid recommend type", nil)
+	}
+}
+
+func (s *DebugService) recommendAppSecret(ctx context.Context, rawAppID string) (string, error) {
+	appID, err := strconv.ParseInt(strings.TrimSpace(rawAppID), 10, 64)
+	if err != nil || appID <= 0 {
+		return "", apperror.BadRequest("invalid appid", nil)
+	}
+
+	values, err := s.redis.HGetAll(ctx, appAuthKey(appID)).Result()
+	if err != nil {
+		return "", apperror.Internal("read app authorization failed", err)
+	}
+	if len(values) == 0 {
+		return "", apperror.Unauthorized("app authorization not found", nil)
+	}
+	if strings.EqualFold(strings.TrimSpace(values["disabled"]), "true") || strings.TrimSpace(values["disabled"]) == "1" {
+		return "", apperror.Unauthorized("app authorization disabled", nil)
+	}
+	secret := strings.TrimSpace(values["secret"])
+	if secret == "" {
+		return "", apperror.Unauthorized("app authorization secret is empty", nil)
+	}
+	return secret, nil
+}
+
+func (s *DebugService) recommendURL(endpoint string, query url.Values) (string, error) {
+	baseURL, err := url.Parse(strings.TrimSpace(s.cfg.RecommendDebug.OnlineBaseURL))
+	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
+		return "", apperror.Internal("invalid recommend online base url", err)
+	}
+	baseURL.Path = strings.TrimRight(baseURL.Path, "/") + endpoint
+	baseURL.RawQuery = query.Encode()
+	return baseURL.String(), nil
+}
+
+func (s *DebugService) callRecommendOnline(ctx context.Context, targetURL string, secret string, appID string) (RecDebugResult, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return RecDebugResult{}, apperror.Internal("build recommend request failed", err)
+	}
+	request.Header.Set("x-dwzauth-appid", strings.TrimSpace(appID))
+	request.Header.Set("x-dwzauth-secret", secret)
+	if rid := requestid.FromContext(ctx); rid != "" {
+		request.Header.Set(requestid.HeaderName, rid)
+	}
+
+	timeout := s.cfg.RecommendDebug.RequestTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
+	response, err := client.Do(request)
+	if err != nil {
+		return RecDebugResult{}, apperror.Internal("call recommend online failed", err)
+	}
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return RecDebugResult{}, apperror.Internal("read recommend response failed", err)
+	}
+
+	var raw any
+	_ = json.Unmarshal(body, &raw)
+	var payload struct {
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			ItemIDs []string `json:"item_ids"`
+			Size    int      `json:"size"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return RecDebugResult{}, apperror.Internal("decode recommend response failed", err)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices || payload.Status != http.StatusOK {
+		status := response.StatusCode
+		if status < http.StatusBadRequest {
+			status = http.StatusInternalServerError
+		}
+		message := strings.TrimSpace(payload.Message)
+		if message == "" {
+			message = "recommend online request failed"
+		}
+		return RecDebugResult{}, apperror.New(status, status, message, nil)
+	}
+
+	return RecDebugResult{
+		Status:  payload.Status,
+		Message: payload.Message,
+		ItemIDs: payload.Data.ItemIDs,
+		Size:    payload.Data.Size,
+		Raw:     raw,
+	}, nil
 }
 
 func (s *DebugService) esIndexName(appID int64) string {
