@@ -3,15 +3,81 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ms-sar-dashboard</title>
+    <title>ms-sar-dashboard / sar-admin</title>
+    <meta name="description" content="ms-sar-dashboard 管理端界面。" />
     <link rel="stylesheet" href="/sar-admin/assets/app.css" />
   </head>
-  <body>
-    <main class="shell">
-      <section class="panel">
-        <h1>ms-sar-dashboard</h1>
-        <p>管理端入口已就绪，登录后可管理应用授权、审计日志，以及只读 debug 页面。</p>
-      </section>
-    </main>
+  <body class="auth-backdrop-open auth-modal-open">
+    <div id="auth-modal-backdrop" class="auth-modal-backdrop" aria-hidden="true"></div>
+    <div class="page-shell">
+      <aside class="sidebar">
+        <div class="brand-card">
+          <p class="eyebrow">sar-admin</p>
+          <h1>搜广推后台</h1>
+        </div>
+
+        <nav class="menu-list" aria-label="管理菜单">
+          <button class="menu-item active" type="button" data-view="apps">应用授权</button>
+          <button class="menu-item" type="button" data-view="logs">审计日志</button>
+          <button class="menu-item" type="button" data-view="es">ES Debug</button>
+          <button class="menu-item" type="button" data-view="rec">推荐 Debug</button>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="auth-box">
+            <form id="login-form" class="login-form modal-card" role="dialog" aria-modal="true" aria-labelledby="login-dialog-title">
+              <div class="modal-head">
+                <div>
+                  <p class="eyebrow">管理员登录</p>
+                  <h2 id="login-dialog-title">管理员登录</h2>
+                </div>
+                <button class="button ghost inline modal-close" type="button" id="close-login-modal" aria-label="关闭登录弹框">×</button>
+              </div>
+              <div id="login-error" class="modal-error hidden" role="alert"></div>
+              <label class="form-row">
+                <span class="form-label">账号</span>
+                <input id="login-name" type="text" autocomplete="username" placeholder="请输入管理员账号" />
+              </label>
+              <label class="form-row">
+                <span class="form-label">密码</span>
+                <input id="login-password" type="password" autocomplete="current-password" placeholder="请输入登录密码" />
+              </label>
+              <button class="button primary" type="submit">登录</button>
+            </form>
+
+            <button id="open-login-button" class="button primary hidden" type="button">登录</button>
+
+            <div id="session-panel" class="session-panel hidden">
+              <div>
+                <p class="eyebrow">当前登录</p>
+                <strong id="session-name">-</strong>
+              </div>
+              <button id="logout-button" class="button secondary" type="button">退出</button>
+            </div>
+          </div>
+        </header>
+
+        <section class="content-panel">
+          <div class="content-head">
+            <div>
+              <p id="view-kicker" class="eyebrow">应用授权</p>
+              <h3 id="view-title">应用授权</h3>
+            </div>
+            <div id="panel-actions" class="panel-actions"></div>
+          </div>
+
+          <div id="panel-feedback" class="panel-feedback">请先登录后查看数据。</div>
+          <div id="secret-reveal-panel" class="secret-reveal-panel hidden"></div>
+          <div id="filter-bar" class="filter-bar"></div>
+          <div id="form-panel" class="form-panel hidden"></div>
+          <div id="panel-content" class="panel-content"></div>
+          <div id="pagination" class="pagination"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/sar-admin/assets/app.js?v=20260520-secret"></script>
   </body>
 </html>

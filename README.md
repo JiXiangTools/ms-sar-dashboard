@@ -85,26 +85,29 @@
 
 ## 本地开发
 
-初始化 PostgreSQL 测试库和默认管理员：
+初始化 `services-deploy/base` 里的 PostgreSQL 数据库和默认管理员：
 
 ```bash
 RESET_DATABASE=true ./admin/init-local-pg.sh
 ```
 
-默认管理员：
+初始化管理员账号密码：
 
 - 账号：`admin`
 - 密码：`dWz@240926!`
 
-如果本机 PostgreSQL DSN 不同，可以通过环境变量覆盖：
+应用默认为空，首次需要在 `sar-admin` 里手动新增。新增或修改应用时，Secret 会生成一串随机密文，并在提交后只展示一次，便于复制保存。
+
+如果本机 `services-deploy` 目录不在默认位置，或你想改成别的 PostgreSQL 实例，可以通过环境变量覆盖：
 
 ```bash
-MSSAR_DATABASE_DSN='postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard_test?sslmode=disable' \
+MSSAR_SERVICES_DEPLOY_DIR='/Users/kely/Desktop/code/services-deploy' \
+MSSAR_DATABASE_DSN='postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard?sslmode=disable' \
 RESET_DATABASE=true \
 ./admin/init-local-pg.sh
 ```
 
-启动本地调试服务：
+启动本地调试服务会先确保 `services-deploy/base` 里的 PostgreSQL / Redis / Elasticsearch 就绪，再初始化缺失数据，不会预置默认应用。如果 `services-deploy/base/.env` 不存在，脚本会使用本地默认值启动中间件；Redis 默认密码为 `redis`，会自动注入到 dashboard 配置里。
 
 ```bash
 ./admin/start-debug.sh
@@ -181,56 +184,12 @@ compose 默认暴露：
 - PostgreSQL 数据库：`ms_sar_dashboard`
 - Redis DB：`8`
 
-## Offline 部署
-
-`deploy/` 下提供从 `alg-rec-offline/test/docker-compose.yml` 提炼出的离线任务 compose，只保留 offline 服务，不包含 Kafka、Redis、Elasticsearch、data-receiver、search-online 和 rec-online 测试容器。
-
-- `deploy/docker-compose.yml`：offline 任务编排
-- `deploy/.env`：镜像、平台、Kafka/Redis/ES 地址、appid、topic 和调度参数
-
-启动：
-
-```bash
-cd deploy
-docker compose up -d
-```
-
-也可以从仓库根目录启动：
-
-```bash
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
-```
-
-启动前需要按实际环境修改 `deploy/.env` 中的 `AROF_KAFKA_BOOTSTRAP_SERVERS`、`AROF_REDIS_URL`、`AROF_ES_URL` 和 `AROF_APPID`。
-
-## 应用栈部署
-
-`deploy/app/` 提供 data-receiver、rec-online、search-online 和 dashboard 的完整应用栈，并包含内部 Kafka、Redis、Elasticsearch、PostgreSQL 依赖。依赖服务不暴露宿主机端口，默认只暴露四个业务端口：
-
-- data-receiver：`8593`
-- rec-online：`8594`
-- search-online：`8595`
-- dashboard：`8596`
-
-启动：
-
-```bash
-cd deploy/app
-docker compose up -d
-```
-
-默认初始化：
-
-- dashboard 管理员：`admin`
-- dashboard 默认应用：`appid=100001`，`secret=secret-1`
-
 ## 目录结构
 
 - `cmd/ms-sar-dashboard`：服务启动入口
 - `cmd/hash-password`：bcrypt 密码哈希生成工具
 - `admin/`：本地初始化、调试启动和镜像构建脚本
 - `configs/`：环境配置
-- `deploy/`：应用栈和离线推荐任务部署 compose
 - `docs/`：设计、接口和协作约束文档
 - `internal/app`：应用装配与生命周期
 - `internal/http`：路由、handler、middleware、UI

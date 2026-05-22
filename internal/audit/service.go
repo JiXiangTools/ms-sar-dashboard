@@ -68,7 +68,12 @@ func sanitize(value any) any {
 		if err := json.Unmarshal(raw, &decoded); err != nil {
 			return typed
 		}
-		return sanitize(decoded)
+		switch decoded.(type) {
+		case map[string]any, []any:
+			return sanitize(decoded)
+		default:
+			return decoded
+		}
 	}
 }
 

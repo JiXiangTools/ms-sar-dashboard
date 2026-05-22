@@ -15,6 +15,9 @@ func Register(engine *gin.Engine) {
 	assetFS := mustSub("static/assets")
 	indexHTML := mustReadFile("static/index.html")
 
+	uiGroup := engine.Group("/sar-admin")
+	uiGroup.Use(noStore)
+
 	serveIndex := func(c *gin.Context) {
 		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
 	}
@@ -23,11 +26,18 @@ func Register(engine *gin.Engine) {
 		c.Status(http.StatusOK)
 	}
 
-	engine.StaticFS("/sar-admin/assets", http.FS(assetFS))
-	engine.GET("/sar-admin", serveIndex)
-	engine.GET("/sar-admin/", serveIndex)
-	engine.HEAD("/sar-admin", serveHead)
-	engine.HEAD("/sar-admin/", serveHead)
+	uiGroup.StaticFS("/assets", http.FS(assetFS))
+	uiGroup.GET("", serveIndex)
+	uiGroup.GET("/", serveIndex)
+	uiGroup.HEAD("", serveHead)
+	uiGroup.HEAD("/", serveHead)
+}
+
+func noStore(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+	c.Next()
 }
 
 func mustSub(path string) fs.FS {
