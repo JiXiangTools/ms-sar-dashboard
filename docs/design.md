@@ -449,12 +449,13 @@ ms_search_product_{appid}_v1
 - 查看文档数量。
 - 按 `appid + item_id` 查看单文档。
 - 对指定 appid 的索引执行只读 `_search`。
+- 使用 Raw 输入执行只读 ES 请求，输入格式如 `GET /user/xxx` 后跟 JSON body，输出保留 ES 返回 JSON 结构。
 
 禁止：
 
 - ES 写操作。
 - `_bulk`、`_delete_by_query`、`_update_by_query`、`_reindex`。
-- 查询非 `elasticsearch.product_index_prefix` 管理的索引。
+- Raw 模式使用 `POST`、`PUT`、`DELETE`、`PATCH` 等写方法。
 - 无限制通配符查询。
 
 审计：

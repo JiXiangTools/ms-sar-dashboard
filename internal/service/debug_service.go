@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/redis/go-redis/v9"
 
@@ -134,6 +135,108 @@ func (s *DebugService) Search(ctx context.Context, adminID int64, appID int64, b
 		logx.Int("body_len", len(body)),
 	)
 	return value, nil
+}
+
+func (s *DebugService) RawES(ctx context.Context, adminID int64, req ESRawRequest) (any, error) {
+	startedAt := time.Now()
+	if !s.cfg.Elasticsearch.DebugEnabled {
+		return nil, apperror.Forbidden("es debug disabled", nil)
+	}
+	if s.es == nil {
+		return nil, apperror.Internal("elasticsearch client is not configured", nil)
+	}
+	method, path, body, err := normalizeESRawRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	value, err := s.es.Raw(ctx, method, path, body)
+	auditContent := map[string]any{
+		"method":   method,
+		"path":     path,
+		"body_len": len(body),
+		"success":  err == nil,
+	}
+	if err != nil {
+		auditContent["error"] = err.Error()
+		_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "RAW", auditContent)
+		return nil, apperror.Internal("es debug failed", err)
+	}
+	_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "RAW", auditContent)
+	logx.Info(s.logger, ctx, startedAt, "es_debug.raw", "es raw request",
+		logx.Int64("admin_id", adminID),
+		logx.String("method", method),
+		logx.String("path", path),
+		logx.Int("body_len", len(body)),
+	)
+	return value, nil
+}
+
+func normalizeESRawRequest(req ESRawRequest) (string, string, []byte, error) {
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
+	path := strings.TrimSpace(req.Path)
+	if method == "" || path == "" {
+		return "", "", nil, apperror.BadRequest("method and path are required", nil)
+	}
+	if method != http.MethodGet && method != http.MethodHead {
+		return "", "", nil, apperror.BadRequest("only GET and HEAD are allowed", nil)
+	}
+	if strings.Contains(path, "://") || strings.HasPrefix(path, "//") {
+		return "", "", nil, apperror.BadRequest("path must be a relative ES path", nil)
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if strings.ContainsAny(path, "\r\n\t") {
+		return "", "", nil, apperror.BadRequest("path contains invalid whitespace", nil)
+	}
+	lowerPath := strings.ToLower(path)
+	for _, blocked := range []string{
+		"/_bulk",
+		"/_delete_by_query",
+		"/_update_by_query",
+		"/_reindex",
+		"/_scripts",
+		"/_snapshot",
+		"/_tasks",
+		"/_security",
+	} {
+		if strings.Contains(lowerPath, blocked) {
+			return "", "", nil, apperror.BadRequest("es write or sensitive operation is not allowed", nil)
+		}
+	}
+	bodyText := strings.TrimSpace(req.Body)
+	if bodyText == "" {
+		return method, path, nil, nil
+	}
+	if !json.Valid([]byte(bodyText)) {
+		return "", "", nil, apperror.BadRequest("request body must be valid JSON", nil)
+	}
+	return method, path, []byte(bodyText), nil
+}
+
+func ParseESRawConsoleInput(input string) (ESRawRequest, error) {
+	trimmed := strings.TrimLeftFunc(input, unicode.IsSpace)
+	if trimmed == "" {
+		return ESRawRequest{}, apperror.BadRequest("request input is required", nil)
+	}
+	lineEnd := strings.IndexByte(trimmed, '\n')
+	firstLine := trimmed
+	rest := ""
+	if lineEnd >= 0 {
+		firstLine = trimmed[:lineEnd]
+		rest = trimmed[lineEnd+1:]
+	}
+	fields := strings.Fields(strings.TrimSpace(firstLine))
+	if len(fields) != 2 {
+		return ESRawRequest{}, apperror.BadRequest("first line must be METHOD /path", nil)
+	}
+	body := strings.TrimSpace(rest)
+	return ESRawRequest{
+		Method: fields[0],
+		Path:   fields[1],
+		Body:   body,
+	}, nil
 }
 
 func (s *DebugService) Recommend(ctx context.Context, adminID int64, req RecDebugRequest) (RecDebugResult, error) {

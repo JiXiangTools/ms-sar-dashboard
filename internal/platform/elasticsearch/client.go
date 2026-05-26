@@ -143,6 +143,37 @@ func (c *Client) Search(ctx context.Context, index string, body []byte) (map[str
 	return c.postJSON(ctx, "/"+url.PathEscape(index)+"/_search", body)
 }
 
+func (c *Client) Raw(ctx context.Context, method string, path string, body []byte) (any, error) {
+	if err := c.ensureConfigured(); err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(ctx, method, path, body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxReadLimit(c.cfg.MaxResponseBytes)))
+	if err != nil {
+		return nil, err
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return map[string]any{"status_code": resp.StatusCode}, nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return map[string]any{
+			"status_code": resp.StatusCode,
+			"body":        strings.TrimSpace(string(raw)),
+		}, nil
+	}
+	return value, nil
+}
+
 func (c *Client) getJSON(ctx context.Context, method string, path string) (map[string]any, error) {
 	raw, err := c.do(ctx, method, path, nil)
 	if err != nil {
@@ -196,7 +227,9 @@ func (c *Client) newRequest(ctx context.Context, method string, path string, bod
 		return nil, err
 	}
 	endpoint := *c.base
-	endpoint.Path = joinPath(endpoint.Path, path)
+	requestPath, rawQuery, _ := strings.Cut(path, "?")
+	endpoint.Path = joinPath(endpoint.Path, requestPath)
+	endpoint.RawQuery = rawQuery
 	reader := bytes.NewReader(body)
 	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), reader)
 	if err != nil {

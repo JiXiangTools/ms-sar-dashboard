@@ -66,14 +66,20 @@ type debugRecRequest struct {
 	Exclude []string `json:"exclude"`
 }
 
+type esRawDebugRequest struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Body   string `json:"body"`
+	Input  string `json:"input"`
+}
+
 func NewAdminHandler(auth *service.AdminAuthService, apps *service.AppService, logs *service.LogService, debug *service.DebugService) *AdminHandler {
 	return &AdminHandler{auth: auth, apps: apps, logs: logs, debug: debug}
 }
 
 func (h *AdminHandler) Login(c *gin.Context) {
-	var req loginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request body", nil)
+	req, ok := bindJSON[loginRequest](c)
+	if !ok {
 		return
 	}
 
@@ -99,9 +105,8 @@ func (h *AdminHandler) Logout(c *gin.Context) {
 }
 
 func (h *AdminHandler) AppAuthorize(c *gin.Context) {
-	var req appAuthorizeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request body", nil)
+	req, ok := bindJSON[appAuthorizeRequest](c)
+	if !ok {
 		return
 	}
 	if req.AppID <= 0 || strings.TrimSpace(req.Secret) == "" {
@@ -120,9 +125,8 @@ func (h *AdminHandler) AppAuthorize(c *gin.Context) {
 }
 
 func (h *AdminHandler) ListApps(c *gin.Context) {
-	var query listAppsQuery
-	if err := c.ShouldBindQuery(&query); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid query", nil)
+	query, ok := bindQuery[listAppsQuery](c)
+	if !ok {
 		return
 	}
 	page, err := h.apps.List(c.Request.Context(), service.AppListQuery{
@@ -139,13 +143,11 @@ func (h *AdminHandler) ListApps(c *gin.Context) {
 }
 
 func (h *AdminHandler) CreateApp(c *gin.Context) {
-	var req createAppRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request body", nil)
+	req, ok := bindJSON[createAppRequest](c)
+	if !ok {
 		return
 	}
-	adminID := c.GetInt64(middleware.ContextKeyAdminID)
-	app, err := h.apps.Create(c.Request.Context(), adminID, service.AppCreateInput{
+	app, err := h.apps.Create(c.Request.Context(), adminID(c), service.AppCreateInput{
 		Name:   req.Name,
 		Secret: req.Secret,
 		Remark: req.Remark,
@@ -158,18 +160,15 @@ func (h *AdminHandler) CreateApp(c *gin.Context) {
 }
 
 func (h *AdminHandler) UpdateApp(c *gin.Context) {
-	appID, err := strconv.ParseInt(c.Param("app_id"), 10, 64)
-	if err != nil || appID <= 0 {
-		response.Error(c, http.StatusBadRequest, "invalid app_id", nil)
+	appID, ok := int64Param(c, "app_id")
+	if !ok {
 		return
 	}
-	var req updateAppRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request body", nil)
+	req, ok := bindJSON[updateAppRequest](c)
+	if !ok {
 		return
 	}
-	adminID := c.GetInt64(middleware.ContextKeyAdminID)
-	app, err := h.apps.Update(c.Request.Context(), adminID, appID, service.AppUpdateInput{
+	app, err := h.apps.Update(c.Request.Context(), adminID(c), appID, service.AppUpdateInput{
 		Name:   req.Name,
 		Secret: req.Secret,
 		Remark: req.Remark,
@@ -182,13 +181,11 @@ func (h *AdminHandler) UpdateApp(c *gin.Context) {
 }
 
 func (h *AdminHandler) DeleteApp(c *gin.Context) {
-	appID, err := strconv.ParseInt(c.Param("app_id"), 10, 64)
-	if err != nil || appID <= 0 {
-		response.Error(c, http.StatusBadRequest, "invalid app_id", nil)
+	appID, ok := int64Param(c, "app_id")
+	if !ok {
 		return
 	}
-	adminID := c.GetInt64(middleware.ContextKeyAdminID)
-	if err := h.apps.Delete(c.Request.Context(), adminID, appID); err != nil {
+	if err := h.apps.Delete(c.Request.Context(), adminID(c), appID); err != nil {
 		writeError(c, err)
 		return
 	}
@@ -196,9 +193,8 @@ func (h *AdminHandler) DeleteApp(c *gin.Context) {
 }
 
 func (h *AdminHandler) ListLogs(c *gin.Context) {
-	var query listLogsQuery
-	if err := c.ShouldBindQuery(&query); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid query", nil)
+	query, ok := bindQuery[listLogsQuery](c)
+	if !ok {
 		return
 	}
 	logsPage, err := h.logs.List(c.Request.Context(), service.AdminLogQuery{
@@ -215,13 +211,11 @@ func (h *AdminHandler) ListLogs(c *gin.Context) {
 }
 
 func (h *AdminHandler) ESIndexInfo(c *gin.Context) {
-	appID, err := strconv.ParseInt(c.Param("appid"), 10, 64)
-	if err != nil || appID <= 0 {
-		response.Error(c, http.StatusBadRequest, "invalid appid", nil)
+	appID, ok := int64Param(c, "appid")
+	if !ok {
 		return
 	}
-	adminID := c.GetInt64(middleware.ContextKeyAdminID)
-	data, err := h.debug.IndexInfo(c.Request.Context(), adminID, appID)
+	data, err := h.debug.IndexInfo(c.Request.Context(), adminID(c), appID)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -230,13 +224,11 @@ func (h *AdminHandler) ESIndexInfo(c *gin.Context) {
 }
 
 func (h *AdminHandler) ESDocument(c *gin.Context) {
-	appID, err := strconv.ParseInt(c.Param("appid"), 10, 64)
-	if err != nil || appID <= 0 {
-		response.Error(c, http.StatusBadRequest, "invalid appid", nil)
+	appID, ok := int64Param(c, "appid")
+	if !ok {
 		return
 	}
-	adminID := c.GetInt64(middleware.ContextKeyAdminID)
-	data, err := h.debug.Document(c.Request.Context(), adminID, appID, c.Param("item_id"))
+	data, err := h.debug.Document(c.Request.Context(), adminID(c), appID, c.Param("item_id"))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -245,18 +237,16 @@ func (h *AdminHandler) ESDocument(c *gin.Context) {
 }
 
 func (h *AdminHandler) ESSearch(c *gin.Context) {
-	appID, err := strconv.ParseInt(c.Param("appid"), 10, 64)
-	if err != nil || appID <= 0 {
-		response.Error(c, http.StatusBadRequest, "invalid appid", nil)
+	appID, ok := int64Param(c, "appid")
+	if !ok {
 		return
 	}
-	adminID := c.GetInt64(middleware.ContextKeyAdminID)
 	body, err := c.GetRawData()
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "invalid request body", nil)
 		return
 	}
-	data, err := h.debug.Search(c.Request.Context(), adminID, appID, body)
+	data, err := h.debug.Search(c.Request.Context(), adminID(c), appID, body)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -264,25 +254,87 @@ func (h *AdminHandler) ESSearch(c *gin.Context) {
 	response.Success(c, data)
 }
 
-func (h *AdminHandler) RecDebug(c *gin.Context) {
-	var req debugRecRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request body", nil)
+func (h *AdminHandler) ESRaw(c *gin.Context) {
+	req, ok := bindJSON[esRawDebugRequest](c)
+	if !ok {
 		return
 	}
-	adminID := c.GetInt64(middleware.ContextKeyAdminID)
-	data, err := h.debug.Recommend(c.Request.Context(), adminID, service.RecDebugRequest{
-		Type:    req.Type,
-		AppID:   req.AppID,
-		ItemID:  req.ItemID,
-		UserID:  req.UserID,
-		Period:  req.Period,
-		Size:    req.Size,
-		Exclude: req.Exclude,
-	})
+	debugReq, err := req.toServiceRequest()
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	data, err := h.debug.RawES(c.Request.Context(), adminID(c), debugReq)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	response.SuccessRaw(c, data)
+}
+
+func (h *AdminHandler) RecDebug(c *gin.Context) {
+	req, ok := bindJSON[debugRecRequest](c)
+	if !ok {
+		return
+	}
+	data, err := h.debug.Recommend(c.Request.Context(), adminID(c), req.toServiceRequest())
 	if err != nil {
 		writeError(c, err)
 		return
 	}
 	response.Success(c, data)
+}
+
+func (r debugRecRequest) toServiceRequest() service.RecDebugRequest {
+	return service.RecDebugRequest{
+		Type:    r.Type,
+		AppID:   r.AppID,
+		ItemID:  r.ItemID,
+		UserID:  r.UserID,
+		Period:  r.Period,
+		Size:    r.Size,
+		Exclude: r.Exclude,
+	}
+}
+
+func (r esRawDebugRequest) toServiceRequest() (service.ESRawRequest, error) {
+	if strings.TrimSpace(r.Input) != "" {
+		return service.ParseESRawConsoleInput(r.Input)
+	}
+	return service.ESRawRequest{
+		Method: r.Method,
+		Path:   r.Path,
+		Body:   r.Body,
+	}, nil
+}
+
+func bindJSON[T any](c *gin.Context) (T, bool) {
+	var req T
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid request body", nil)
+		return req, false
+	}
+	return req, true
+}
+
+func bindQuery[T any](c *gin.Context) (T, bool) {
+	var query T
+	if err := c.ShouldBindQuery(&query); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid query", nil)
+		return query, false
+	}
+	return query, true
+}
+
+func int64Param(c *gin.Context, name string) (int64, bool) {
+	value, err := strconv.ParseInt(c.Param(name), 10, 64)
+	if err != nil || value <= 0 {
+		response.Error(c, http.StatusBadRequest, "invalid "+name, nil)
+		return 0, false
+	}
+	return value, true
+}
+
+func adminID(c *gin.Context) int64 {
+	return c.GetInt64(middleware.ContextKeyAdminID)
 }

@@ -53,6 +53,7 @@ Authorization: Bearer <access_token>
 | `GET` | `/api/v1/admin/debug/es/index/{appid}` | 是 | ES 索引信息 |
 | `GET` | `/api/v1/admin/debug/es/doc/{appid}/{item_id}` | 是 | ES 文档查看 |
 | `POST` | `/api/v1/admin/debug/es/search/{appid}` | 是 | ES 只读查询 |
+| `POST` | `/api/v1/admin/debug/es/raw` | 是 | ES Raw 只读调试 |
 | `POST` | `/api/v1/admin/debug/rec` | 是 | 推荐 debug |
 
 首期不提供 refresh token，不提供管理员管理 API。
@@ -334,6 +335,38 @@ POST /api/v1/admin/debug/es/search/{appid}
 - 只允许 `_search`。
 - 限制响应体大小和超时时间。
 - 禁止 ES 写操作。
+
+### Raw 只读调试
+
+```http
+POST /api/v1/admin/debug/es/raw
+```
+
+请求：
+
+```json
+{
+  "input": "GET /user/xxx\n\n{}"
+}
+```
+
+也可拆分传入：
+
+```json
+{
+  "method": "GET",
+  "path": "/user/xxx",
+  "body": "{}"
+}
+```
+
+规则：
+
+- 首行格式为 `GET /path` 或 `HEAD /path`。
+- 后续内容必须为空或合法 JSON。
+- 输出 `data` 为 ES 返回的 JSON 原文结构。
+- 禁止 `POST`、`PUT`、`DELETE`、`PATCH` 等写方法。
+- 禁止绝对 URL、`_bulk`、`_delete_by_query`、`_update_by_query`、`_reindex` 等写入或敏感入口。
 
 ## 11. 推荐 Debug
 

@@ -40,3 +40,8 @@ func clampSize(size int, max int) int {
 	}
 	return size
 }
+
+func isTruthy(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return normalized == "true" || normalized == "1" || normalized == "yes"
+}

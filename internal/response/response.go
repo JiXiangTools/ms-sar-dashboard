@@ -34,6 +34,15 @@ func Success(c *gin.Context, data any) {
 	JSON(c, http.StatusOK, "success", data)
 }
 
+func SuccessRaw(c *gin.Context, data any) {
+	c.JSON(http.StatusOK, Envelope{
+		Status:    http.StatusOK,
+		Message:   "success",
+		Data:      data,
+		RequestID: requestid.FromGin(c),
+	})
+}
+
 func Error(c *gin.Context, httpStatus int, message string, data any) {
 	ErrorWithStatus(c, httpStatus, httpStatus, message, data)
 }

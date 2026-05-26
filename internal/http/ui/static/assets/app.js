@@ -62,6 +62,7 @@ const state = {
   debug: {
     esMode: "index",
     esResult: "等待查询结果。",
+    esRawInput: "GET /user/xxx\n\n{}",
     recResult: "等待查询结果。",
     recType: "hot",
     recDraft: {
@@ -83,6 +84,8 @@ const logoutButton = document.getElementById("logout-button");
 const panelActions = document.getElementById("panel-actions");
 const viewKicker = document.getElementById("view-kicker");
 const viewTitle = document.getElementById("view-title");
+const workspaceTitle = document.getElementById("workspace-title");
+const panelSummary = document.getElementById("panel-summary");
 const panelFeedback = document.getElementById("panel-feedback");
 const secretRevealPanel = document.getElementById("secret-reveal-panel");
 const filterBar = document.getElementById("filter-bar");
@@ -339,6 +342,7 @@ function renderHeader() {
   const config = viewConfigs[state.activeView];
   viewKicker.textContent = config.kicker;
   viewTitle.textContent = config.title;
+  workspaceTitle.textContent = config.title;
   panelActions.innerHTML = "";
 
   if (!hasSession()) {
@@ -351,8 +355,64 @@ function renderHeader() {
     button.className = `button ${action === "create" ? "primary" : "secondary"}`;
     button.dataset.action = action;
     button.textContent = action === "create" ? "新增应用" : "刷新";
+    button.title = button.textContent;
     panelActions.appendChild(button);
   });
+}
+
+function renderPanelSummary() {
+  const summary = getPanelSummary();
+  if (!hasSession() || summary.length === 0) {
+    panelSummary.classList.add("hidden");
+    panelSummary.innerHTML = "";
+    return;
+  }
+
+  panelSummary.classList.remove("hidden");
+  panelSummary.innerHTML = summary
+    .map(
+      (item) => `
+        <div class="summary-item">
+          <span>${escapeHTML(item.label)}</span>
+          <strong>${escapeHTML(item.value)}</strong>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function getPanelSummary() {
+  if (state.activeView === "apps") {
+    const data = state.data.apps;
+    return [
+      { label: "当前页", value: data ? `${(data.items || []).length} 项` : "--" },
+      { label: "授权总数", value: data?.total ?? "--" },
+      { label: "分页", value: data ? `${data.page || 1} / ${Math.max(1, Math.ceil(Number(data.total || 0) / pageSize))}` : "--" }
+    ];
+  }
+  if (state.activeView === "logs") {
+    const data = state.data.logs;
+    return [
+      { label: "当前页", value: data ? `${(data.items || []).length} 条` : "--" },
+      { label: "日志总数", value: data?.total ?? "--" },
+      { label: "分页", value: data ? `${data.page || 1} / ${Math.max(1, Math.ceil(Number(data.total || 0) / pageSize))}` : "--" }
+    ];
+  }
+  if (state.activeView === "es") {
+    return [
+      { label: "模式", value: state.debug.esMode === "raw" ? "Raw" : state.debug.esMode },
+      { label: "权限", value: "只读" },
+      { label: "输出", value: state.debug.esResult === "等待查询结果。" ? "待执行" : "已更新" }
+    ];
+  }
+  if (state.activeView === "rec") {
+    return [
+      { label: "类型", value: state.debug.recType || "hot" },
+      { label: "Size", value: state.debug.recDraft?.size || "20" },
+      { label: "输出", value: state.debug.recResult === "等待查询结果。" ? "待执行" : "已更新" }
+    ];
+  }
+  return [];
 }
 
 function renderFeedback() {
@@ -507,7 +567,7 @@ function renderAppsTable() {
   const data = state.data.apps;
   const items = data?.items || [];
   if (!items.length) {
-    panelContent.innerHTML = "";
+    panelContent.innerHTML = renderEmptyState("暂无授权应用", "新增应用后会在这里展示 appid、secret 与更新时间。");
     renderPagination(data);
     return;
   }
@@ -557,7 +617,7 @@ function renderLogsTable() {
   const data = state.data.logs;
   const items = data?.items || [];
   if (!items.length) {
-    panelContent.innerHTML = "";
+    panelContent.innerHTML = renderEmptyState("暂无审计日志", "登录、应用变更和 Debug 操作会写入审计日志。");
     renderPagination(data);
     return;
   }
@@ -596,6 +656,15 @@ function renderLogsTable() {
   renderPagination(data);
 }
 
+function renderEmptyState(title, description) {
+  return `
+    <div class="empty-state">
+      <strong>${escapeHTML(title)}</strong>
+      <span>${escapeHTML(description)}</span>
+    </div>
+  `;
+}
+
 function renderPagination(data) {
   if (!data || !viewConfigs[state.activeView].endpoint) {
     pagination.innerHTML = "";
@@ -612,6 +681,7 @@ function renderPagination(data) {
 }
 
 function renderESDebug() {
+  const rawMode = state.debug.esMode === "raw";
   formPanel.classList.add("hidden");
   panelContent.innerHTML = `
     <div class="debug-layout">
@@ -622,8 +692,18 @@ function renderESDebug() {
             <option value="index" ${state.debug.esMode === "index" ? "selected" : ""}>索引信息</option>
             <option value="doc" ${state.debug.esMode === "doc" ? "selected" : ""}>文档查看</option>
             <option value="search" ${state.debug.esMode === "search" ? "selected" : ""}>查询</option>
+            <option value="raw" ${rawMode ? "selected" : ""}>Raw 请求</option>
           </select>
         </label>
+        ${
+          rawMode
+            ? `
+        <label class="form-row">
+          <span class="form-label">请求</span>
+          <textarea class="es-raw-input" name="raw_input" spellcheck="false">${escapeHTML(state.debug.esRawInput || "GET /user/xxx\n\n{}")}</textarea>
+        </label>
+            `
+            : `
         <label class="form-row">
           <span class="form-label">AppID</span>
           <input name="appid" type="number" min="1" required />
@@ -636,6 +716,8 @@ function renderESDebug() {
           <span class="form-label">Query DSL</span>
           <textarea name="query">{"query":{"match_all":{}},"size":10}</textarea>
         </label>
+            `
+        }
         <div class="form-actions">
           <button class="button primary" type="submit">执行</button>
         </div>
@@ -715,6 +797,7 @@ function renderWorkspace() {
   renderAuth();
   renderMenu();
   renderHeader();
+  renderPanelSummary();
   renderFeedback();
   renderSecretRevealPanel();
   renderFilters();
@@ -819,6 +902,28 @@ async function submitESDebug(form) {
   const appid = String(values.appid || "").trim();
   const itemID = String(values.item_id || "").trim();
   state.debug.esMode = mode;
+  if (mode === "raw") {
+    const rawInput = String(values.raw_input || "").trim();
+    state.debug.esRawInput = rawInput;
+    if (!rawInput) {
+      state.debug.esResult = "请求不能为空。";
+      renderWorkspace();
+      return;
+    }
+    state.debug.esResult = "查询中...";
+    renderWorkspace();
+    try {
+      const data = await requestAdminData("/api/v1/admin/debug/es/raw", {
+        method: "POST",
+        json: { input: rawInput }
+      });
+      state.debug.esResult = JSON.stringify(data, null, 2);
+    } catch (error) {
+      state.debug.esResult = error instanceof Error ? error.message : "查询失败";
+    }
+    renderWorkspace();
+    return;
+  }
   if (!appid) {
     state.debug.esResult = "AppID 不能为空。";
     renderWorkspace();
@@ -850,6 +955,14 @@ async function submitESDebug(form) {
     state.debug.esResult = error instanceof Error ? error.message : "查询失败";
   }
   renderWorkspace();
+}
+
+function syncESDebugDraft(form) {
+  const values = readFormData(form);
+  state.debug.esMode = String(values.mode || state.debug.esMode || "index");
+  if (state.debug.esMode === "raw") {
+    state.debug.esRawInput = String(values.raw_input || "");
+  }
 }
 
 async function submitRecDebug(form) {
@@ -1093,6 +1206,11 @@ function bindWorkspaceEvents() {
   });
 
   panelContent.addEventListener("input", (event) => {
+    const esForm = event.target.closest("#es-debug-form");
+    if (esForm) {
+      syncESDebugDraft(esForm);
+      return;
+    }
     const form = event.target.closest("#rec-debug-form");
     if (form) {
       syncRecDebugDraft(form);
@@ -1100,6 +1218,14 @@ function bindWorkspaceEvents() {
   });
 
   panelContent.addEventListener("change", (event) => {
+    const esForm = event.target.closest("#es-debug-form");
+    if (esForm) {
+      syncESDebugDraft(esForm);
+      if (event.target.name === "mode") {
+        renderWorkspace();
+      }
+      return;
+    }
     const form = event.target.closest("#rec-debug-form");
     if (!form) {
       return;

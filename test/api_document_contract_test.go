@@ -13,6 +13,7 @@ func TestAdminAPIDocumentContainsCoreContract(t *testing.T) {
 		"/api/v1/admin/app",
 		"/api/v1/auth/app",
 		"/api/v1/admin/debug/es/index/{appid}",
+		"/api/v1/admin/debug/es/raw",
 		"/api/v1/admin/debug/rec",
 		"x-dwzauth-appid",
 		"x-dwzauth-secret",

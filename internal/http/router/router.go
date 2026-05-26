@@ -63,6 +63,7 @@ func New(cfg config.Config, logger *log.Logger, deps Dependencies) *gin.Engine {
 			authorized.GET("/debug/es/index/:appid", adminHandler.ESIndexInfo)
 			authorized.GET("/debug/es/doc/:appid/:item_id", adminHandler.ESDocument)
 			authorized.POST("/debug/es/search/:appid", adminHandler.ESSearch)
+			authorized.POST("/debug/es/raw", adminHandler.ESRaw)
 			authorized.POST("/debug/rec", adminHandler.RecDebug)
 		}
 	}

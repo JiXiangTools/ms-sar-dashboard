@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ms-sar-dashboard / sar-admin</title>
-    <meta name="description" content="ms-sar-dashboard 管理端界面。" />
+    <meta name="description" content="ms-sar-dashboard 搜广推后台控制台。" />
     <link rel="stylesheet" href="/sar-admin/assets/app.css" />
   </head>
   <body class="auth-backdrop-open auth-modal-open">
@@ -12,20 +12,33 @@
     <div class="page-shell">
       <aside class="sidebar">
         <div class="brand-card">
-          <p class="eyebrow">sar-admin</p>
-          <h1>搜广推后台</h1>
+          <div class="brand-mark" aria-hidden="true">MS</div>
+          <div>
+            <p class="eyebrow">sar-admin</p>
+            <h1>搜广推后台</h1>
+            <p class="brand-subtitle">统一授权 / 运营调试</p>
+          </div>
         </div>
 
         <nav class="menu-list" aria-label="管理菜单">
-          <button class="menu-item active" type="button" data-view="apps">应用授权</button>
-          <button class="menu-item" type="button" data-view="logs">审计日志</button>
-          <button class="menu-item" type="button" data-view="es">ES Debug</button>
-          <button class="menu-item" type="button" data-view="rec">推荐 Debug</button>
+          <button class="menu-item active" type="button" data-view="apps"><span class="menu-icon" aria-hidden="true">01</span><span>应用授权</span></button>
+          <button class="menu-item" type="button" data-view="logs"><span class="menu-icon" aria-hidden="true">02</span><span>审计日志</span></button>
+          <button class="menu-item" type="button" data-view="es"><span class="menu-icon" aria-hidden="true">03</span><span>ES Debug</span></button>
+          <button class="menu-item" type="button" data-view="rec"><span class="menu-icon" aria-hidden="true">04</span><span>推荐 Debug</span></button>
         </nav>
+
+        <div class="sidebar-footer">
+          <span class="status-dot" aria-hidden="true"></span>
+          internal console
+        </div>
       </aside>
 
       <main class="workspace">
         <header class="topbar">
+          <div class="topbar-title">
+            <p class="eyebrow">ms-sar-dashboard</p>
+            <h2 id="workspace-title">授权控制台</h2>
+          </div>
           <div class="auth-box">
             <form id="login-form" class="login-form modal-card" role="dialog" aria-modal="true" aria-labelledby="login-dialog-title">
               <div class="modal-head">
@@ -68,6 +81,7 @@
             <div id="panel-actions" class="panel-actions"></div>
           </div>
 
+          <div id="panel-summary" class="panel-summary hidden"></div>
           <div id="panel-feedback" class="panel-feedback">请先登录后查看数据。</div>
           <div id="secret-reveal-panel" class="secret-reveal-panel hidden"></div>
           <div id="filter-bar" class="filter-bar"></div>

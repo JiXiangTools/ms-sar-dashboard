@@ -87,6 +87,9 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 		`closeLoginButton.disabled = !loggedIn`,
 		`id="rec-debug-type"`,
 		`data-rec-field="period"`,
+		`<option value="raw"`,
+		`GET /user/xxx`,
+		`/api/v1/admin/debug/es/raw`,
 		`/api/v1/admin/debug/rec`,
 		`连接服务失败，请确认 sar-admin 服务已启动，并刷新页面后重试。`,
 	}

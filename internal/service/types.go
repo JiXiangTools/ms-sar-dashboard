@@ -75,6 +75,12 @@ type RecDebugResult struct {
 	Raw      any            `json:"raw,omitempty"`
 }
 
+type ESRawRequest struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Body   string `json:"body"`
+}
+
 type RecItem struct {
 	ItemID string  `json:"item_id"`
 	Score  float64 `json:"score,omitempty"`
