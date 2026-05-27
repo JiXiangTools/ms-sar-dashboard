@@ -523,9 +523,9 @@ function renderAppForm() {
           <input name="name" type="text" value="${escapeHTML(draft.name || "")}" required />
         </label>
         <label class="form-row">
-          <span class="form-label">${isEdit ? "新密钥" : "密钥"}</span>
+          <span class="form-label">密钥</span>
           <div class="secret-input-group">
-            <input name="secret" type="text" value="${escapeHTML(draft.secret || "")}" placeholder="${isEdit ? "留空保持原密钥" : "留空后自动生成"}" spellcheck="false" autocomplete="off" />
+            <input name="secret" type="text" value="${escapeHTML(draft.secret || "")}" placeholder="${isEdit ? "留空保持当前密钥" : "留空后自动生成"}" spellcheck="false" autocomplete="off" />
             <button class="button ghost inline regenerate-secret" type="button" data-action="regenerate-app-secret" aria-label="重新生成 Secret" data-tooltip="重新生成 Secret">↻</button>
           </div>
         </label>
@@ -823,10 +823,11 @@ function openAppForm(mode, appID = 0) {
   state.appForm = {
     mode,
     id: appID,
+    originalSecret: item?.secret || "",
     draft: {
       name: item?.name || "",
       remark: item?.remark || "",
-      secret: mode === "create" ? generateAppSecret() : ""
+      secret: mode === "create" ? generateAppSecret() : item?.secret || ""
     }
   };
   state.appFormError = "";
@@ -842,7 +843,9 @@ async function submitAppForm(form) {
     remark: String(values.remark || "").trim()
   };
   const secret = String(values.secret || "").trim();
-  if (secret || !isEdit) {
+  const originalSecret = String(state.appForm?.originalSecret || "").trim();
+  const secretChanged = isEdit && secret !== "" && secret !== originalSecret;
+  if (!isEdit || secretChanged) {
     payload.secret = secret;
   }
   if (!payload.name) {
@@ -858,7 +861,7 @@ async function submitAppForm(form) {
       method: isEdit ? "PUT" : "POST",
       json: payload
     });
-    const revealSecret = !isEdit || secret !== "";
+    const revealSecret = !isEdit || secretChanged;
     state.appForm = null;
     state.appFormError = "";
     state.data.apps = null;
