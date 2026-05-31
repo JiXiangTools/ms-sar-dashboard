@@ -449,9 +449,9 @@ func (s *DebugService) callRecommendOnline(ctx context.Context, targetURL string
 }
 
 func (s *DebugService) esIndexName(appID int64) string {
-	prefix := strings.TrimSpace(s.cfg.Elasticsearch.ProductIndexPrefix)
+	prefix := strings.TrimSpace(s.cfg.Elasticsearch.ItemIndexPrefix)
 	if prefix == "" {
-		prefix = "ms_search_product"
+		prefix = "ms_search_item"
 	}
 	return fmt.Sprintf("%s_%d_v1", prefix, appID)
 }

@@ -96,13 +96,13 @@ func TestParseESRawConsoleInput(t *testing.T) {
 func TestNormalizeESRawRequestAllowsOnlyReadJSONRequests(t *testing.T) {
 	method, path, body, err := normalizeESRawRequest(ESRawRequest{
 		Method: "get",
-		Path:   "ms_search_product_100001_v1/_search?pretty=true",
+		Path:   "ms_search_item_100001_v1/_search?pretty=true",
 		Body:   `{"size":1}`,
 	})
 	if err != nil {
 		t.Fatalf("normalize raw request: %v", err)
 	}
-	if method != http.MethodGet || path != "/ms_search_product_100001_v1/_search?pretty=true" || string(body) != `{"size":1}` {
+	if method != http.MethodGet || path != "/ms_search_item_100001_v1/_search?pretty=true" || string(body) != `{"size":1}` {
 		t.Fatalf("unexpected normalized request: method=%s path=%s body=%s", method, path, string(body))
 	}
 

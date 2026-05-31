@@ -151,7 +151,7 @@ DWZ_APP_SECRET=secret-1 \
 python3 ./test/test-action-upload.py
 ```
 
-- `test/test-items-upload.py` 调用 `POST /api/v1/msdr/product/report`，批量写入覆盖核心字段的商品/内容样例。
+- `test/test-items-upload.py` 调用 `POST /api/v1/msdr/item/report`，批量写入覆盖核心字段的商品/内容样例。
 - `test/test-action-upload.py` 调用 `POST /api/v1/msdr/behavior/report`，写入覆盖全部当前 `event_type`、设备上下文、用户/session/匿名身份和行为扩展属性的用户行为样例。
 - 运行前需确保 `ms-sar-dashboard` 已创建对应 `DWZ_APPID` / `DWZ_APP_SECRET`，并且 `POST /api/v1/auth/app` 可以校验通过。
 - 如果 `ms-data-receiver` 客户端上报 API 的路径、Header、字段、枚举或批量限制发生修改，必须同步更新这两个脚本，避免联调和验收数据与真实接口契约脱节。

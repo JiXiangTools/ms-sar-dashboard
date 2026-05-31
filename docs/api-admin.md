@@ -319,7 +319,7 @@ GET /api/v1/admin/debug/es/index/{appid}
 GET /api/v1/admin/debug/es/doc/{appid}/{item_id}
 ```
 
-按索引 `ms_search_product_{appid}_v1` 和 `_id={item_id}` 查看文档。
+按索引 `ms_search_item_{appid}_v1` 和 `_id={item_id}` 查看文档。
 
 ### 查询调试
 
@@ -331,7 +331,7 @@ POST /api/v1/admin/debug/es/search/{appid}
 
 限制：
 
-- 只允许访问 `ms_search_product_{appid}_v1`。
+- 只允许访问 `ms_search_item_{appid}_v1`。
 - 只允许 `_search`。
 - 限制响应体大小和超时时间。
 - 禁止 ES 写操作。

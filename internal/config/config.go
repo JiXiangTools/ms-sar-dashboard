@@ -72,13 +72,13 @@ type RedisConfig struct {
 }
 
 type ElasticsearchConfig struct {
-	Addrs              []string      `mapstructure:"addrs"`
-	Username           string        `mapstructure:"username"`
-	Password           string        `mapstructure:"password"`
-	ProductIndexPrefix string        `mapstructure:"product_index_prefix"`
-	RequestTimeout     time.Duration `mapstructure:"request_timeout"`
-	MaxResponseBytes   int64         `mapstructure:"max_response_bytes"`
-	DebugEnabled       bool          `mapstructure:"debug_enabled"`
+	Addrs            []string      `mapstructure:"addrs"`
+	Username         string        `mapstructure:"username"`
+	Password         string        `mapstructure:"password"`
+	ItemIndexPrefix  string        `mapstructure:"item_index_prefix"`
+	RequestTimeout   time.Duration `mapstructure:"request_timeout"`
+	MaxResponseBytes int64         `mapstructure:"max_response_bytes"`
+	DebugEnabled     bool          `mapstructure:"debug_enabled"`
 }
 
 type RecommendDebugConfig struct {
@@ -159,7 +159,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.health_check_timeout", "2s")
 
 	v.SetDefault("elasticsearch.addrs", []string{"http://127.0.0.1:9200"})
-	v.SetDefault("elasticsearch.product_index_prefix", "ms_search_product")
+	v.SetDefault("elasticsearch.item_index_prefix", "ms_search_item")
 	v.SetDefault("elasticsearch.request_timeout", "5s")
 	v.SetDefault("elasticsearch.max_response_bytes", int64(4*1024*1024))
 	v.SetDefault("elasticsearch.debug_enabled", true)

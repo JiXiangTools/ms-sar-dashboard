@@ -36,7 +36,7 @@ redis:
 elasticsearch:
   addrs:
     - http://127.0.0.1:9200
-  product_index_prefix: ms_search_product
+  item_index_prefix: ms_search_item
   request_timeout: 5s
   max_response_bytes: 4194304
   debug_enabled: true

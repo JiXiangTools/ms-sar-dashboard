@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Upload broad sample item data to the ms-data-receiver product API.
+"""Upload broad sample item data to the ms-data-receiver item API.
 
 This script is intentionally kept close to the data receiver contract. If
-`/api/v1/msdr/product/report` changes, update this script at the same time.
+`/api/v1/msdr/item/report` changes, update this script at the same time.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import urllib.request
 from typing import Any
 
 
-PRODUCT_PATH = "/api/v1/msdr/product/report"
+ITEM_PATH = "/api/v1/msdr/item/report"
 MAX_BATCH_SIZE = 100
 
 
@@ -43,7 +43,7 @@ def bounded_batch_size(value: str) -> int:
     return parsed
 
 
-def product(
+def item_payload(
     item_id: str,
     title: str,
     *,
@@ -78,10 +78,10 @@ def product(
     return data
 
 
-def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
+def build_items(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
     item = lambda number: f"{item_prefix}{number:04d}"
     return [
-        product(
+        item_payload(
             item(1),
             "Star Harbor",
             author="North Studio",
@@ -103,7 +103,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "source": "test-items-upload",
             },
         ),
-        product(
+        item_payload(
             item(2),
             "Rain City Letters",
             author="Ink Line",
@@ -121,7 +121,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": True,
             },
         ),
-        product(
+        item_payload(
             item(3),
             "Iron Orchard",
             author="Red Gate",
@@ -139,7 +139,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(4),
             "Midnight Archive",
             author="Grey Room",
@@ -157,7 +157,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(5),
             "Kitchen Knights",
             author="Table Seven",
@@ -175,7 +175,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(6),
             "Neon Drifter",
             author="Blue Circuit",
@@ -193,7 +193,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(7),
             "Cloud School",
             author="Morning Bell",
@@ -211,7 +211,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(8),
             "Last Train North",
             author="Signal House",
@@ -229,7 +229,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": True,
             },
         ),
-        product(
+        item_payload(
             item(9),
             "Pixel Guild",
             author="Quest Lab",
@@ -247,7 +247,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(10),
             "Quiet Volcano",
             author="Stone Paper",
@@ -265,7 +265,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(11),
             "Mirror Botanist",
             author="Green Glass",
@@ -283,7 +283,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(12),
             "Offline Planet",
             author="Patch Notes",
@@ -301,7 +301,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(13),
             "Retired Hero Service",
             author="Town Square",
@@ -319,7 +319,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(14),
             "Deep Sea Courier",
             author="Abyss Mail",
@@ -337,7 +337,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(
+        item_payload(
             item(15),
             "The Draft Shelf",
             author="Archive Bot",
@@ -355,7 +355,7 @@ def build_products(item_prefix: str, publish_base: int) -> list[dict[str, Any]]:
                 "finished": False,
             },
         ),
-        product(item(16), "Minimal Required Item"),
+        item_payload(item(16), "Minimal Required Item"),
     ]
 
 
@@ -420,9 +420,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     base_url = args.base_url.rstrip("/")
-    url = f"{base_url}{PRODUCT_PATH}"
+    url = f"{base_url}{ITEM_PATH}"
     publish_base = int(time.time()) - 3600
-    products = build_products(args.item_prefix, publish_base)
+    items = build_items(args.item_prefix, publish_base)
 
     headers = {
         "Content-Type": "application/json",
@@ -431,7 +431,7 @@ def main() -> int:
         "x-dwzauth-secret": str(args.secret),
     }
 
-    batches = chunked(products, args.batch_size)
+    batches = chunked(items, args.batch_size)
     if args.dry_run:
         print(json.dumps({"url": url, "headers": {**headers, "x-dwzauth-secret": "***"}, "batches": batches}, ensure_ascii=False, indent=2))
         return 0
@@ -443,7 +443,7 @@ def main() -> int:
             **headers,
             "x-request-id": f"test-items-upload-{int(time.time())}-{index}",
         }
-        response = post_json(url, {"products": batch}, batch_headers, args.timeout)
+        response = post_json(url, {"items": batch}, batch_headers, args.timeout)
         data = response.get("data") or {}
         accepted = int(data.get("accepted", 0))
         published = int(data.get("published", 0))
@@ -454,7 +454,7 @@ def main() -> int:
             f"published={published} request_id={response.get('request_id')}"
         )
 
-    print(f"[items] done total_items={len(products)} accepted={total_accepted} published={total_published}")
+    print(f"[items] done total_items={len(items)} accepted={total_accepted} published={total_published}")
     return 0
 
 

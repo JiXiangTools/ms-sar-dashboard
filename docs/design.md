@@ -190,7 +190,7 @@ elasticsearch:
     - http://127.0.0.1:9200
   username: ""
   password: ""
-  product_index_prefix: ms_search_product
+  item_index_prefix: ms_search_item
   request_timeout: 5s
   max_response_bytes: 4194304
   debug_enabled: true
@@ -438,7 +438,7 @@ ES Debug 是只读工具，不是 Kibana 替代品。首期只做能排障的最
 索引规则：
 
 ```text
-ms_search_product_{appid}_v1
+ms_search_item_{appid}_v1
 ```
 
 功能：
