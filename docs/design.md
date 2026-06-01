@@ -81,7 +81,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 - PostgreSQL 是后台管理事实源。
 - dashboard 授权接口是在线服务唯一授权入口。
 - 在线服务不读 `t_app`，不读 Redis 授权投影，不读本地授权文件。
-- dashboard 授权接口不可用时在线服务不得放行请求。
+- dashboard 授权 API 自身不做降级；在线服务在授权服务异常时只能按各自文档化的本地成功授权缓存策略处理。
 
 ## 4. 职责边界
 
@@ -127,7 +127,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 
 - 个性化推荐、热门推荐、相关推荐。
 - 使用统一 Header 调用 dashboard 授权接口校验授权。
-- 使用 Header `x-dwzauth-appid` 作为推荐 Redis key 中的 `{appid}`。
+- 使用 Header `x-dwzauth-appid`（规范十进制字符串）作为推荐 Redis key 中的 `{appid}`。
 
 移除：
 
@@ -140,7 +140,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 
 - 搜索查询、分页、过滤、排序、高亮。
 - 使用统一 Header 调用 dashboard 授权接口校验授权。
-- 使用 Header `x-dwzauth-appid` 路由到 ES 索引。
+- 使用 Header `x-dwzauth-appid`（规范十进制字符串）路由到 ES 索引。
 
 移除：
 
@@ -242,7 +242,7 @@ recommend_debug:
 
 规则：
 
-- `id` 对应 Header `x-dwzauth-appid`。
+- `id` 对应 Header `x-dwzauth-appid`（规范十进制字符串）。
 - `secret` 对应 Header `x-dwzauth-secret`。
 - 删除应用使用软删除：`disabled=true`。
 - 删除应用后必须删除 Redis `app_auth_{appid}`。
@@ -304,8 +304,8 @@ app_auth_{appid}
 
 dashboard 授权 API 校验规则：
 
-1. 从 Header 读取 `x-dwzauth-appid`、`x-dwzauth-secret`、`x-request-id`。
-2. 校验 appid 为正整数，secret 非空。
+1. 只从 JSON body 读取 `appid` 和 `secret`；`x-request-id` 只用于追踪，不参与授权材料。
+2. 校验 appid 为规范十进制正整数，secret 非空。
 3. 读取 dashboard 内部 Redis 授权投影 `app_auth_{appid}`。
 4. appid 不存在则失败。
 5. `disabled=true` 则失败。
@@ -366,7 +366,7 @@ Content-Type: application/json
 处理流程：
 
 1. 只接受 JSON body 中的 `appid` 和 `secret`，不从 Query 读取 secret。
-2. 校验 `appid` 为正整数，`secret` 非空。
+2. 校验 `appid` 为正整数，`secret` 非空；字符串形式 appid 必须使用规范十进制正整数。
 3. 读取 dashboard 内部 Redis 授权投影 `app_auth_{appid}`。
 4. appid 不存在、`disabled=true`、secret 为空或 secret 不一致时返回失败。
 5. 授权投影不可用或读取异常时返回失败，不降级读取数据库。
@@ -470,7 +470,7 @@ ms_search_item_{appid}_v1
 
 支持：
 
-- 热门推荐：调用 `/api/v1/msrec/recommend/hot`，只有选择 `hot` 时才展示并传递 `hour`、`day`、`week`。
+- 热门推荐：调用 `/api/v1/msrec/recommend/hot`，只有选择 `hot` 时才展示并传递 `hour`、`day`、`week`、`quarter`、`all`。
 - 相关推荐：调用 `/api/v1/msrec/recommend/related`。
 - 个性化推荐：调用 `/api/v1/msrec/recommend/personalized`。
 - 展示推荐接口路径、请求参数、返回 item 列表和原始响应。
@@ -522,7 +522,7 @@ UI 规则：
 - 三个在线服务不得继续使用固定 `x-dwz-auth` 或本地静态 token。
 - 三个在线服务只通过 dashboard 授权接口授权。
 - 应用授权校验 API 只从 JSON body 读取 secret，不允许 Query 传递 secret。
-- dashboard 授权失败或授权接口不可用时不得放行。
+- dashboard 明确授权失败时不得放行；授权接口异常时在线服务只能按各自文档化的本地成功授权缓存策略处理。
 - ES Debug 只允许只读操作。
 - 推荐 Debug 只允许调用推荐查询接口，不提供 Redis key 直查、写入或删除能力。
 

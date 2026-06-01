@@ -203,7 +203,7 @@ DELETE /api/v1/admin/app/{app_id}
 
 | Header | 必填 | 说明 |
 | --- | --- | --- |
-| `x-dwzauth-appid` | 是 | 应用 ID |
+| `x-dwzauth-appid` | 是 | 应用 ID，必须为规范十进制正整数 |
 | `x-dwzauth-secret` | 是 | 应用密钥 |
 | `x-request-id` | 否 | 请求追踪 ID |
 
@@ -213,7 +213,7 @@ DELETE /api/v1/admin/app/{app_id}
 - appid 不存在，失败。
 - 应用已禁用，失败。
 - secret 不存在或不匹配，失败。
-- dashboard 授权接口不可用或超时，失败。
+- dashboard 授权 API 自身不可用或超时时失败；在线服务如需临时沿用本地成功授权缓存，必须以各自服务文档为准。
 
 失败响应：
 
@@ -239,7 +239,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `appid` | integer | 是 | 应用 ID，必须为正整数 |
+| `appid` | integer | 是 | 应用 ID，必须为规范十进制正整数 |
 | `secret` | string | 是 | 应用密钥，前后空格会被裁剪 |
 
 示例：
@@ -277,7 +277,7 @@ Content-Type: application/json
 
 - 调用方只根据 JSON `status` 判断结果：`status=200` 为成功，其他值为失败。
 - 校验逻辑读取 dashboard 内部应用授权投影 `app_auth_{appid}`。
-- `appid` 为空、非正整数，或 `secret` 为空时返回失败。
+- `appid` 为空、非正整数，或 `secret` 为空时返回失败；字符串形式 appid 必须使用规范十进制正整数。
 - appid 不存在、应用已禁用、secret 不匹配时返回失败。
 - 授权投影不可用或读取异常时返回失败，不允许降级为通过。
 - 失败场景包含 appid 不存在、secret 不存在、`appid + secret` 不匹配等业务错误；对外统一返回 `invalid app authorization`。
@@ -379,10 +379,10 @@ POST /api/v1/admin/debug/rec
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `type` | string | 是 | `hot`、`related`、`personalized` |
-| `appid` | string | 是 | 应用 ID |
+| `appid` | string | 是 | 应用 ID，必须为规范十进制正整数 |
 | `item_id` | string | 否 | 相关推荐使用 |
 | `user_id` | string | 否 | 个性化使用 |
-| `period` | string | 否 | 仅热门使用：`hour`、`day`、`week`，默认 `day` |
+| `period` | string | 否 | 仅热门使用：`hour`、`day`、`week`、`quarter`、`all`，默认 `day` |
 | `size` | integer | 否 | 默认 `20` |
 | `exclude` | array | 否 | 排除 item_id |
 

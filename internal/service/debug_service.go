@@ -327,7 +327,7 @@ func buildRecommendDebugRequest(req RecDebugRequest, size int) (string, map[stri
 		if period == "" {
 			period = "day"
 		}
-		if period != "hour" && period != "day" && period != "week" {
+		if period != "hour" && period != "day" && period != "week" && period != "quarter" && period != "all" {
 			return "", nil, nil, apperror.BadRequest("invalid hot period", nil)
 		}
 		params["period"] = period
@@ -355,8 +355,12 @@ func buildRecommendDebugRequest(req RecDebugRequest, size int) (string, map[stri
 }
 
 func (s *DebugService) recommendAppSecret(ctx context.Context, rawAppID string) (string, error) {
-	appID, err := strconv.ParseInt(strings.TrimSpace(rawAppID), 10, 64)
+	appIDText := strings.TrimSpace(rawAppID)
+	appID, err := strconv.ParseInt(appIDText, 10, 64)
 	if err != nil || appID <= 0 {
+		return "", apperror.BadRequest("invalid appid", nil)
+	}
+	if strconv.FormatInt(appID, 10) != appIDText {
 		return "", apperror.BadRequest("invalid appid", nil)
 	}
 

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/elasticsearch"
@@ -34,6 +35,28 @@ func TestBuildRecommendDebugRequestUsesOnlineEndpoints(t *testing.T) {
 	}
 	if query.Get("exclude") != "C1,C2" {
 		t.Fatalf("unexpected exclude query: %s", query.Get("exclude"))
+	}
+	_, params, query, err = buildRecommendDebugRequest(RecDebugRequest{
+		Type:   "hot",
+		AppID:  "100001",
+		Period: "quarter",
+	}, 20)
+	if err != nil {
+		t.Fatalf("quarter hot period should be accepted: %v", err)
+	}
+	if params["period"] != "quarter" || query.Get("period") != "quarter" {
+		t.Fatalf("quarter period not propagated")
+	}
+	_, params, query, err = buildRecommendDebugRequest(RecDebugRequest{
+		Type:   "hot",
+		AppID:  "100001",
+		Period: "all",
+	}, 20)
+	if err != nil {
+		t.Fatalf("all hot period should be accepted: %v", err)
+	}
+	if params["period"] != "all" || query.Get("period") != "all" {
+		t.Fatalf("all period not propagated")
 	}
 
 	endpoint, params, query, err = buildRecommendDebugRequest(RecDebugRequest{
@@ -76,6 +99,21 @@ func TestBuildRecommendDebugRequestUsesOnlineEndpoints(t *testing.T) {
 func TestBuildRecommendDebugRequestRejectsLegacyKeyType(t *testing.T) {
 	if _, _, _, err := buildRecommendDebugRequest(RecDebugRequest{Type: "key", AppID: "100001"}, 20); err == nil {
 		t.Fatal("expected key debug type to be rejected")
+	}
+}
+
+func TestRecommendDebugRejectsNonCanonicalAppID(t *testing.T) {
+	service := NewDebugService(config.Config{
+		RecommendDebug: config.RecommendDebugConfig{
+			DebugEnabled:      true,
+			OnlineBaseURL:     "http://127.0.0.1:1",
+			MaxCandidateLimit: 20,
+			RequestTimeout:    time.Second,
+		},
+	}, nil, nil, nil, log.New(io.Discard, "", 0))
+
+	if _, err := service.recommendAppSecret(context.Background(), "0100001"); err == nil {
+		t.Fatal("expected leading-zero appid to be rejected")
 	}
 }
 

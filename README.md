@@ -78,7 +78,7 @@
 验收清单：
 
 - dashboard：登录成功/失败、登录日志、应用创建/列表/修改/删除、Redis 同步、审计日志脱敏。
-- data-receiver：统一 Header 授权成功，secret 错误、应用删除、dashboard 授权接口不可用时失败，Kafka 消息格式不变。
+- data-receiver：统一 Header 授权成功，secret 错误、应用删除时失败；dashboard 授权接口不可用且无历史成功缓存时失败，有历史成功缓存时按接入服务契约短期沿用；Kafka 消息格式不变。
 - rec-online：统一 Header 授权成功，推荐 Redis key 使用 Header appid，推荐响应格式不变。
 - search-online：统一 Header 授权成功，ES 索引使用 Header appid，搜索响应格式不变。
 - debug：ES Debug 和推荐 Debug 只读，操作写审计日志。

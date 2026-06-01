@@ -740,6 +740,8 @@ function renderRecDebug() {
               <option value="hour" ${period === "hour" ? "selected" : ""}>hour</option>
               <option value="day" ${period === "day" ? "selected" : ""}>day</option>
               <option value="week" ${period === "week" ? "selected" : ""}>week</option>
+              <option value="quarter" ${period === "quarter" ? "selected" : ""}>quarter</option>
+              <option value="all" ${period === "all" ? "selected" : ""}>all</option>
             </select>
           </label>
     `,

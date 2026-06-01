@@ -91,6 +91,8 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 		`closeLoginButton.disabled = !loggedIn`,
 		`id="rec-debug-type"`,
 		`data-rec-field="period"`,
+		`<option value="quarter"`,
+		`<option value="all"`,
 		`<option value="raw"`,
 		`GET /user/xxx`,
 		`/api/v1/admin/debug/es/raw`,
