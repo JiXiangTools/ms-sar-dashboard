@@ -23,6 +23,10 @@ func appAuthKey(appID int64) string {
 	return fmt.Sprintf("app_auth_%d", appID)
 }
 
+func appAuthAllAppIDsKey() string {
+	return "app_auth_allappids"
+}
+
 func normalizeOptionalString(value *string) *string {
 	if value == nil {
 		return nil

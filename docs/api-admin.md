@@ -44,6 +44,7 @@ Authorization: Bearer <access_token>
 | `GET` | `/health` | 否 | 健康检查 |
 | `POST` | `/api/v1/admin/auth/login` | 否 | 登录 |
 | `POST` | `/api/v1/admin/auth/logout` | 是 | 退出登录 |
+| `GET` | `/api/v1/auth/app` | 否 | 有效应用 appid 列表 |
 | `POST` | `/api/v1/auth/app` | 否 | 应用授权校验 |
 | `GET` | `/api/v1/admin/app` | 是 | 应用分页列表 |
 | `POST` | `/api/v1/admin/app` | 是 | 创建应用 |
@@ -158,7 +159,7 @@ POST /api/v1/admin/app
 规则：
 
 - 写入 `t_app`。
-- 将所有有效应用重新刷到 Redis，覆盖各自的 `app_auth_{appid}`。
+- 将所有有效应用重新刷到 Redis，覆盖各自的 `app_auth_{appid}`，并同步 `app_auth_allappids`。
 - 写审计日志：`cate=APP`，`type=CREATE`。
 - Redis 同步失败时创建失败。
 
@@ -180,7 +181,7 @@ PUT /api/v1/admin/app/{app_id}
 
 - 至少传一个字段。
 - 写入 `t_app`。
-- 将所有有效应用重新刷到 Redis，覆盖各自的 `app_auth_{appid}`。
+- 将所有有效应用重新刷到 Redis，覆盖各自的 `app_auth_{appid}`，并同步 `app_auth_allappids`。
 - 写审计日志：`cate=APP`，`type=UPDATE`。
 - Redis 同步失败时修改失败。
 
@@ -194,6 +195,7 @@ DELETE /api/v1/admin/app/{app_id}
 
 - 软删除：`t_app.disabled=true`。
 - 删除 Redis `app_auth_{appid}`。
+- 刷新 Redis `app_auth_allappids`。
 - 写审计日志：`cate=APP`，`type=DELETE`。
 - Redis 删除失败时删除失败。
 
@@ -226,7 +228,39 @@ DELETE /api/v1/admin/app/{app_id}
 }
 ```
 
-### 8.1 应用授权校验 API
+### 8.1 有效应用 appid 列表 API
+
+该接口用于无鉴权读取当前系统里的有效 appid 列表。优先读取 Redis 缓存 `app_auth_allappids`；缓存不存在时查询数据库并回写缓存。
+
+```http
+GET /api/v1/auth/app
+```
+
+成功响应：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "data": [
+    {
+      "appid": 100001,
+      "disabled": false
+    }
+  ],
+  "request_id": "0000000000000001"
+}
+```
+
+规则：
+
+- 不要求管理端 JWT。
+- `data` 只返回当前有效应用，因此 `disabled` 固定为 `false`。
+- 缓存命中时直接返回 `app_auth_allappids`。
+- 缓存未命中时查询数据库中的有效应用，并回写 `app_auth_allappids`。
+- Redis 读取或写入异常时返回失败，不降级绕过错误。
+
+### 8.2 应用授权校验 API
 
 该接口用于调用方主动校验 `appid + secret` 是否有效。接口本身不要求管理端 JWT，鉴权材料只允许从 JSON body 读取，不从 Query 读取 secret。
 

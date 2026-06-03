@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,69 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/repository"
 )
+
+func TestAppServiceListAuthorizedAppsReturnsCachedIndex(t *testing.T) {
+	repo := &fakeAppRepository{
+		apps: map[int64]domain.App{
+			1: testApp(1, "alpha", "secret-1"),
+		},
+	}
+	cache := &fakeAppRedis{
+		stringValues: map[string]string{
+			appAuthAllAppIDsKey(): `[{"appid":1,"disabled":false},{"appid":2,"disabled":false}]`,
+		},
+	}
+	service := newTestAppService(repo, cache)
+
+	summaries, err := service.ListAuthorizedApps(context.Background())
+	if err != nil {
+		t.Fatalf("list authorized apps: %v", err)
+	}
+
+	want := []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+		{AppID: 2, Disabled: false},
+	}
+	if !reflect.DeepEqual(summaries, want) {
+		t.Fatalf("unexpected summaries: %#v", summaries)
+	}
+	if repo.listEnabledAppsCalls != 0 {
+		t.Fatalf("expected cache hit to skip repository, got %d calls", repo.listEnabledAppsCalls)
+	}
+}
+
+func TestAppServiceListAuthorizedAppsLoadsRepositoryAndCachesOnMiss(t *testing.T) {
+	repo := &fakeAppRepository{
+		apps: map[int64]domain.App{
+			1: testApp(1, "alpha", "secret-1"),
+			2: testApp(2, "beta", "secret-2"),
+			3: func() domain.App {
+				app := testApp(3, "gamma", "secret-3")
+				app.Disabled = true
+				return app
+			}(),
+		},
+	}
+	cache := &fakeAppRedis{}
+	service := newTestAppService(repo, cache)
+
+	summaries, err := service.ListAuthorizedApps(context.Background())
+	if err != nil {
+		t.Fatalf("list authorized apps: %v", err)
+	}
+
+	want := []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+		{AppID: 2, Disabled: false},
+	}
+	if !reflect.DeepEqual(summaries, want) {
+		t.Fatalf("unexpected summaries: %#v", summaries)
+	}
+	if repo.listEnabledAppsCalls != 1 {
+		t.Fatalf("expected one repository call, got %d", repo.listEnabledAppsCalls)
+	}
+	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], want)
+}
 
 func TestAppServiceCreateRefreshesAllAppAuthKeys(t *testing.T) {
 	repo := &fakeAppRepository{
@@ -50,6 +114,10 @@ func TestAppServiceCreateRefreshesAllAppAuthKeys(t *testing.T) {
 	if got := cache.hashValue(appAuthKey(2), "secret"); got != "secret-2" {
 		t.Fatalf("expected new app secret to refresh, got %q", got)
 	}
+	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+		{AppID: 2, Disabled: false},
+	})
 }
 
 func TestAppServiceUpdateRefreshesAllAppAuthKeys(t *testing.T) {
@@ -81,6 +149,40 @@ func TestAppServiceUpdateRefreshesAllAppAuthKeys(t *testing.T) {
 	if got := cache.hashValue(appAuthKey(2), "secret"); got != "secret-2-new" {
 		t.Fatalf("expected updated app secret to refresh, got %q", got)
 	}
+	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+		{AppID: 2, Disabled: false},
+	})
+}
+
+func TestAppServiceDeleteRefreshesAuthorizedAppIndex(t *testing.T) {
+	repo := &fakeAppRepository{
+		nextID: 3,
+		apps: map[int64]domain.App{
+			1: testApp(1, "alpha", "secret-1"),
+			2: testApp(2, "beta", "secret-2"),
+		},
+	}
+	cache := &fakeAppRedis{
+		hashes: map[string]map[string]string{
+			appAuthKey(1): {"secret": "secret-1"},
+			appAuthKey(2): {"secret": "secret-2"},
+		},
+		stringValues: map[string]string{
+			appAuthAllAppIDsKey(): `[{"appid":1,"disabled":false},{"appid":2,"disabled":false}]`,
+		},
+	}
+	service := newTestAppService(repo, cache)
+
+	if err := service.Delete(context.Background(), 7, 2); err != nil {
+		t.Fatalf("delete app: %v", err)
+	}
+	if _, ok := cache.hashes[appAuthKey(2)]; ok {
+		t.Fatal("expected deleted app auth key to be removed")
+	}
+	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+	})
 }
 
 func TestAppServiceCreateRollbackRemovesNewRedisKeyWhenRefreshFails(t *testing.T) {
@@ -113,6 +215,9 @@ func TestAppServiceCreateRollbackRemovesNewRedisKeyWhenRefreshFails(t *testing.T
 	if got := cache.hashValue(appAuthKey(1), "secret"); got != "secret-1" {
 		t.Fatalf("expected existing app auth data to remain valid, got %q", got)
 	}
+	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+	})
 }
 
 func TestAppServiceUpdateRollbackRestoresRedisKeyWhenRefreshFails(t *testing.T) {
@@ -145,6 +250,48 @@ func TestAppServiceUpdateRollbackRestoresRedisKeyWhenRefreshFails(t *testing.T) 
 	if !reflect.DeepEqual(cache.hsetKeys, []string{appAuthKey(1), appAuthKey(2), appAuthKey(2)}) {
 		t.Fatalf("expected rollback to rewrite the failed app auth key, got %#v", cache.hsetKeys)
 	}
+	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+		{AppID: 2, Disabled: false},
+	})
+}
+
+func TestAppServiceDeleteRollbackRestoresRedisKeyAndIndexWhenIndexRefreshFails(t *testing.T) {
+	repo := &fakeAppRepository{
+		nextID: 3,
+		apps: map[int64]domain.App{
+			1: testApp(1, "alpha", "secret-1"),
+			2: testApp(2, "beta", "secret-2"),
+		},
+	}
+	cache := &fakeAppRedis{
+		hashes: map[string]map[string]string{
+			appAuthKey(1): {"secret": "secret-1"},
+			appAuthKey(2): {"secret": "secret-2"},
+		},
+		stringValues: map[string]string{
+			appAuthAllAppIDsKey(): `[{"appid":1,"disabled":false},{"appid":2,"disabled":false}]`,
+		},
+		failAfterSetRemaining: map[string]int{
+			appAuthAllAppIDsKey(): 1,
+		},
+		failErr: errors.New("redis set failed"),
+	}
+	service := newTestAppService(repo, cache)
+
+	if err := service.Delete(context.Background(), 7, 2); err == nil {
+		t.Fatal("expected delete to fail when app index refresh fails")
+	}
+	if got := repo.apps[2].Disabled; got {
+		t.Fatal("expected repository rollback to restore deleted app")
+	}
+	if got := cache.hashValue(appAuthKey(2), "secret"); got != "secret-2" {
+		t.Fatalf("expected deleted app auth key to be restored, got %q", got)
+	}
+	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+		{AppID: 2, Disabled: false},
+	})
 }
 
 func TestAppServiceCreateLogsRefreshedAppIDsAndSuccess(t *testing.T) {
@@ -247,8 +394,9 @@ func stringPtr(value string) *string {
 }
 
 type fakeAppRepository struct {
-	nextID int64
-	apps   map[int64]domain.App
+	nextID               int64
+	apps                 map[int64]domain.App
+	listEnabledAppsCalls int
 }
 
 func (r *fakeAppRepository) ListApps(_ context.Context, _ *int64, _ string, page int, pageSize int, includeDisabled bool) (domain.Page[domain.App], error) {
@@ -265,6 +413,7 @@ func (r *fakeAppRepository) ListApps(_ context.Context, _ *int64, _ string, page
 }
 
 func (r *fakeAppRepository) ListEnabledApps(_ context.Context) ([]domain.App, error) {
+	r.listEnabledAppsCalls++
 	return r.listApps(false)
 }
 
@@ -350,8 +499,11 @@ func (r *fakeAppRepository) ensureStore() {
 type fakeAppRedis struct {
 	redis.UniversalClient
 	hashes                  map[string]map[string]string
+	stringValues            map[string]string
 	hsetKeys                []string
+	setKeys                 []string
 	failAfterWriteRemaining map[string]int
+	failAfterSetRemaining   map[string]int
 	failErr                 error
 }
 
@@ -382,8 +534,29 @@ func (r *fakeAppRedis) Del(_ context.Context, keys ...string) *redis.IntCmd {
 	r.ensureStore()
 	for _, key := range keys {
 		delete(r.hashes, key)
+		delete(r.stringValues, key)
 	}
 	return redis.NewIntResult(int64(len(keys)), nil)
+}
+
+func (r *fakeAppRedis) Get(_ context.Context, key string) *redis.StringCmd {
+	r.ensureStore()
+	value, ok := r.stringValues[key]
+	if !ok {
+		return redis.NewStringResult("", redis.Nil)
+	}
+	return redis.NewStringResult(value, nil)
+}
+
+func (r *fakeAppRedis) Set(_ context.Context, key string, value any, _ time.Duration) *redis.StatusCmd {
+	r.ensureStore()
+	if remaining := r.failAfterSetRemaining[key]; remaining > 0 {
+		r.failAfterSetRemaining[key] = remaining - 1
+		return redis.NewStatusResult("", r.failErr)
+	}
+	r.stringValues[key] = fmt.Sprint(value)
+	r.setKeys = append(r.setKeys, key)
+	return redis.NewStatusResult("OK", nil)
 }
 
 func (r *fakeAppRedis) HGetAll(_ context.Context, key string) *redis.MapStringStringCmd {
@@ -406,7 +579,24 @@ func (r *fakeAppRedis) ensureStore() {
 	if r.hashes == nil {
 		r.hashes = make(map[string]map[string]string)
 	}
+	if r.stringValues == nil {
+		r.stringValues = make(map[string]string)
+	}
 	if r.failAfterWriteRemaining == nil {
 		r.failAfterWriteRemaining = make(map[string]int)
+	}
+	if r.failAfterSetRemaining == nil {
+		r.failAfterSetRemaining = make(map[string]int)
+	}
+}
+
+func assertCachedAppAuthSummaries(t *testing.T, raw string, want []AppAuthSummary) {
+	t.Helper()
+	var got []AppAuthSummary
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode cached summaries: %v raw=%q", err, raw)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cached summaries: %#v", got)
 	}
 }

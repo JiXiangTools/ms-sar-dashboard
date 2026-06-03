@@ -124,6 +124,19 @@ func (h *AdminHandler) AppAuthorize(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+func (h *AdminHandler) ListAuthorizedApps(c *gin.Context) {
+	if h.apps == nil {
+		response.Error(c, http.StatusInternalServerError, "internal server error", nil)
+		return
+	}
+	data, err := h.apps.ListAuthorizedApps(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	response.Success(c, data)
+}
+
 func (h *AdminHandler) ListApps(c *gin.Context) {
 	query, ok := bindQuery[listAppsQuery](c)
 	if !ok {

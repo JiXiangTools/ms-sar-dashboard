@@ -12,7 +12,7 @@
 按奥卡姆剃刀，首期只保留一个事实源、一个在线授权入口、两种身份：
 
 - PostgreSQL 是管理端事实源：管理员、应用、审计日志都在数据库。
-- dashboard 授权 API 是在线服务唯一授权入口；dashboard 内部维护 Redis 授权投影 `app_auth_{appid}`。
+- dashboard 授权 API 是在线服务唯一授权入口；dashboard 内部维护 Redis 授权投影 `app_auth_{appid}` 和 `app_auth_allappids`。
 - 管理端身份使用账号密码登录后签发短期 JWT。
 - 在线服务身份使用请求头 `x-dwzauth-appid` + `x-dwzauth-secret`。
 
@@ -59,6 +59,7 @@
                            |   t_admin_log
                            v
                            | Redis app_auth_{appid}
+                           | Redis app_auth_allappids
                            |
                            v
                   POST /api/v1/auth/app
@@ -73,7 +74,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 
 1. 管理员在 dashboard 创建或修改应用。
 2. dashboard 写 PostgreSQL。
-3. dashboard 同步内部 Redis 授权投影 `app_auth_{appid}`。
+3. dashboard 同步内部 Redis 授权投影 `app_auth_{appid}` 和 `app_auth_allappids`。
 4. 三个在线服务收到请求后，调用 dashboard 授权接口校验。
 
 核心约束：
@@ -94,6 +95,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 - 记录登录成功、登录失败、应用变更和 debug 操作日志。
 - 应用授权配置增删改查。
 - 将应用授权同步到 Redis。
+- 提供有效应用 appid 列表查询。
 - 提供 ES debug 页面。
 - 提供推荐 debug 页面。
 
@@ -295,11 +297,30 @@ app_auth_{appid}
 | `disabled` | `true` 或 `false` |
 | `updated_at` | 最近更新时间，RFC3339 |
 
+Redis key：
+
+```text
+app_auth_allappids
+```
+
+类型：string(JSON)。
+
+值示例：
+
+```json
+[
+  {
+    "appid": 100001,
+    "disabled": false
+  }
+]
+```
+
 同步规则：
 
-- 创建应用：写数据库，成功后将所有有效应用重新刷到 Redis，并覆盖各自的 Redis hash。
-- 修改应用：写数据库，成功后将所有有效应用重新刷到 Redis，并覆盖各自的 Redis hash。
-- 删除应用：写数据库 `disabled=true`，成功后删除 Redis key。
+- 创建应用：写数据库，成功后将所有有效应用重新刷到 Redis，并覆盖各自的 Redis hash 和 `app_auth_allappids`。
+- 修改应用：写数据库，成功后将所有有效应用重新刷到 Redis，并覆盖各自的 Redis hash 和 `app_auth_allappids`。
+- 删除应用：写数据库 `disabled=true`，成功后删除 Redis key，并刷新 `app_auth_allappids`。
 - Redis 同步失败时，管理端操作返回失败；避免数据库成功但在线授权未更新。
 
 dashboard 授权 API 校验规则：
@@ -323,7 +344,29 @@ dashboard 授权 API 校验规则：
 }
 ```
 
-### 7.1 应用授权校验 API
+### 7.1 有效应用 appid 列表 API
+
+dashboard 提供一个无鉴权接口，用于返回当前有效应用 appid 列表。
+
+```http
+GET /api/v1/auth/app
+```
+
+处理流程：
+
+1. 优先读取 Redis `app_auth_allappids`。
+2. 缓存存在时直接返回。
+3. 缓存不存在时查询数据库里的 `disabled=false` 应用。
+4. 将查询结果写回 Redis `app_auth_allappids`。
+5. 返回统一响应，`data` 为 appid 列表。
+
+规则：
+
+- 不要求管理端 JWT。
+- 只返回有效应用，因此 `disabled` 固定为 `false`。
+- Redis 读取或写入异常时返回失败，不降级为忽略错误。
+
+### 7.2 应用授权校验 API
 
 dashboard 增加一个对外授权校验接口，用于调用方以 HTTP 方式验证 `appid + secret` 是否有效。该接口只做校验，不创建会话，不返回应用资料，不替代应用管理接口。
 

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"strconv"
@@ -43,6 +44,22 @@ func (s *AppService) List(ctx context.Context, query AppListQuery) (domain.Page[
 	return s.repo.ListApps(ctx, query.AppID, query.Name, query.Page, query.PageSize, false)
 }
 
+func (s *AppService) ListAuthorizedApps(ctx context.Context) ([]AppAuthSummary, error) {
+	if s.redis == nil {
+		return nil, apperror.Internal("redis client is not configured", nil)
+	}
+
+	cached, err := s.redis.Get(ctx, appAuthAllAppIDsKey()).Result()
+	switch {
+	case err == nil:
+		return parseAppAuthSummariesCache(cached)
+	case errors.Is(err, redis.Nil):
+		return s.listAuthorizedAppsFromRepository(ctx)
+	default:
+		return nil, apperror.Internal("read app authorization index failed", err)
+	}
+}
+
 func (s *AppService) Create(ctx context.Context, adminID int64, input AppCreateInput) (domain.App, error) {
 	startedAt := time.Now()
 	draft, err := newAppDraft(input)
@@ -64,6 +81,7 @@ func (s *AppService) Create(ctx context.Context, adminID int64, input AppCreateI
 	if err := s.syncAllAppAuthorizations(ctx); err != nil {
 		_ = s.repo.HardDeleteApp(ctx, app.ID)
 		_ = s.syncAppDeletion(ctx, app.ID)
+		_ = s.syncAllAuthorizedAppIDs(ctx)
 		s.recordAppAudit(ctx, adminID, "CREATE", map[string]any{
 			"app_id":  app.ID,
 			"name":    app.Name,
@@ -102,6 +120,7 @@ func (s *AppService) Update(ctx context.Context, adminID int64, appID int64, inp
 	if err := s.syncAllAppAuthorizations(ctx); err != nil {
 		_ = s.repo.RestoreApp(ctx, existing)
 		_ = s.syncAppAuthorization(ctx, existing)
+		_ = s.syncAllAuthorizedAppIDs(ctx)
 		s.recordAppAudit(ctx, adminID, "UPDATE", map[string]any{
 			"app_id":  appID,
 			"success": false,
@@ -135,6 +154,17 @@ func (s *AppService) Delete(ctx context.Context, adminID int64, appID int64) err
 
 	if err := s.syncAppDeletion(ctx, appID); err != nil {
 		_ = s.repo.RestoreApp(ctx, existing)
+		s.recordAppAudit(ctx, adminID, "DELETE", map[string]any{
+			"app_id":  appID,
+			"success": false,
+			"error":   err.Error(),
+		})
+		return apperror.Internal("sync app authorization failed", err)
+	}
+	if err := s.syncAllAuthorizedAppIDs(ctx); err != nil {
+		_ = s.repo.RestoreApp(ctx, existing)
+		_ = s.syncAppAuthorization(ctx, existing)
+		_ = s.syncAllAuthorizedAppIDs(ctx)
 		s.recordAppAudit(ctx, adminID, "DELETE", map[string]any{
 			"app_id":  appID,
 			"success": false,
@@ -194,8 +224,20 @@ func (s *AppService) syncAllAppAuthorizations(ctx context.Context) error {
 		}
 		refreshedAppIDs = append(refreshedAppIDs, app.ID)
 	}
+	if err := s.syncAuthorizedAppIDs(ctx, buildAppAuthSummaries(apps)); err != nil {
+		s.logAppAuthorizationRefresh(ctx, startedAt, targetAppIDs, refreshedAppIDs, 0, false, err)
+		return err
+	}
 	s.logAppAuthorizationRefresh(ctx, startedAt, targetAppIDs, refreshedAppIDs, 0, true, nil)
 	return nil
+}
+
+func (s *AppService) syncAllAuthorizedAppIDs(ctx context.Context) error {
+	apps, err := s.listEnabledApps(ctx)
+	if err != nil {
+		return err
+	}
+	return s.syncAuthorizedAppIDs(ctx, buildAppAuthSummaries(apps))
 }
 
 func (s *AppService) syncAppDeletion(ctx context.Context, appID int64) error {
@@ -203,6 +245,17 @@ func (s *AppService) syncAppDeletion(ctx context.Context, appID int64) error {
 		return errors.New("redis client is not configured")
 	}
 	return s.redis.Del(ctx, appAuthKey(appID)).Err()
+}
+
+func (s *AppService) syncAuthorizedAppIDs(ctx context.Context, summaries []AppAuthSummary) error {
+	if s.redis == nil {
+		return errors.New("redis client is not configured")
+	}
+	payload, err := json.Marshal(normalizeAppAuthSummaries(summaries))
+	if err != nil {
+		return err
+	}
+	return s.redis.Set(ctx, appAuthAllAppIDsKey(), string(payload), 0).Err()
 }
 
 func (s *AppService) authorizeFromRedis(ctx context.Context, rawAppID string, rawSecret string) (domain.App, error) {
@@ -221,6 +274,25 @@ func (s *AppService) authorizeFromRedis(ctx context.Context, rawAppID string, ra
 		return domain.App{}, apperror.Unauthorized("invalid app authorization", nil)
 	}
 	return record.toApp(), nil
+}
+
+func (s *AppService) listAuthorizedAppsFromRepository(ctx context.Context) ([]AppAuthSummary, error) {
+	apps, err := s.listEnabledApps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	summaries := buildAppAuthSummaries(apps)
+	if err := s.syncAuthorizedAppIDs(ctx, summaries); err != nil {
+		return nil, apperror.Internal("sync app authorization index failed", err)
+	}
+	return summaries, nil
+}
+
+func (s *AppService) listEnabledApps(ctx context.Context) ([]domain.App, error) {
+	if s.repo == nil {
+		return nil, errors.New("app repository is not configured")
+	}
+	return s.repo.ListEnabledApps(ctx)
 }
 
 func newAppDraft(input AppCreateInput) (domain.App, error) {
@@ -356,6 +428,32 @@ func appIDs(apps []domain.App) []int64 {
 		ids = append(ids, app.ID)
 	}
 	return ids
+}
+
+func buildAppAuthSummaries(apps []domain.App) []AppAuthSummary {
+	summaries := make([]AppAuthSummary, 0, len(apps))
+	for _, app := range apps {
+		summaries = append(summaries, AppAuthSummary{
+			AppID:    app.ID,
+			Disabled: app.Disabled,
+		})
+	}
+	return summaries
+}
+
+func normalizeAppAuthSummaries(summaries []AppAuthSummary) []AppAuthSummary {
+	if len(summaries) == 0 {
+		return make([]AppAuthSummary, 0)
+	}
+	return summaries
+}
+
+func parseAppAuthSummariesCache(raw string) ([]AppAuthSummary, error) {
+	var summaries []AppAuthSummary
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &summaries); err != nil {
+		return nil, apperror.Internal("invalid app authorization index cache", err)
+	}
+	return normalizeAppAuthSummaries(summaries), nil
 }
 
 func joinAppIDs(appIDs []int64) string {

@@ -93,3 +93,8 @@ type AppAuthRecord struct {
 	Disabled  bool
 	UpdatedAt time.Time
 }
+
+type AppAuthSummary struct {
+	AppID    int64 `json:"appid"`
+	Disabled bool  `json:"disabled"`
+}
