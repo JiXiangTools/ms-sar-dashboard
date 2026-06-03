@@ -143,6 +143,22 @@ func (r *Repository) ListApps(ctx context.Context, appID *int64, name string, pa
 	}, nil
 }
 
+func (r *Repository) ListEnabledApps(ctx context.Context) ([]domain.App, error) {
+	var rows []appModel
+	if err := r.orm.WithContext(ctx).
+		Where("disabled = false").
+		Order("id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, mapSQLError(err)
+	}
+
+	items := make([]domain.App, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, toApp(row))
+	}
+	return items, nil
+}
+
 func (r *Repository) CreateApp(ctx context.Context, app domain.App) (domain.App, error) {
 	model := appModel{
 		Name:           app.Name,

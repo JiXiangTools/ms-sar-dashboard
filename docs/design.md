@@ -297,8 +297,8 @@ app_auth_{appid}
 
 同步规则：
 
-- 创建应用：写数据库，成功后写 Redis hash。
-- 修改应用：写数据库，成功后覆盖 Redis hash。
+- 创建应用：写数据库，成功后将所有有效应用重新刷到 Redis，并覆盖各自的 Redis hash。
+- 修改应用：写数据库，成功后将所有有效应用重新刷到 Redis，并覆盖各自的 Redis hash。
 - 删除应用：写数据库 `disabled=true`，成功后删除 Redis key。
 - Redis 同步失败时，管理端操作返回失败；避免数据库成功但在线授权未更新。
 

@@ -158,7 +158,7 @@ POST /api/v1/admin/app
 规则：
 
 - 写入 `t_app`。
-- 同步 Redis `app_auth_{appid}`。
+- 将所有有效应用重新刷到 Redis，覆盖各自的 `app_auth_{appid}`。
 - 写审计日志：`cate=APP`，`type=CREATE`。
 - Redis 同步失败时创建失败。
 
@@ -180,7 +180,7 @@ PUT /api/v1/admin/app/{app_id}
 
 - 至少传一个字段。
 - 写入 `t_app`。
-- 覆盖 Redis `app_auth_{appid}`。
+- 将所有有效应用重新刷到 Redis，覆盖各自的 `app_auth_{appid}`。
 - 写审计日志：`cate=APP`，`type=UPDATE`。
 - Redis 同步失败时修改失败。
 

@@ -18,10 +18,21 @@ import (
 )
 
 type AppService struct {
-	repo   *repository.Repository
+	repo   appRepository
 	redis  redis.UniversalClient
 	audit  *audit.Service
 	logger *log.Logger
+}
+
+type appRepository interface {
+	ListApps(ctx context.Context, appID *int64, name string, page int, pageSize int, includeDisabled bool) (domain.Page[domain.App], error)
+	ListEnabledApps(ctx context.Context) ([]domain.App, error)
+	CreateApp(ctx context.Context, app domain.App) (domain.App, error)
+	UpdateApp(ctx context.Context, app domain.App) (domain.App, error)
+	DeleteApp(ctx context.Context, appID int64) error
+	RestoreApp(ctx context.Context, app domain.App) error
+	HardDeleteApp(ctx context.Context, appID int64) error
+	GetAppByID(ctx context.Context, appID int64) (domain.App, error)
 }
 
 func NewAppService(repo *repository.Repository, redisClient redis.UniversalClient, auditSvc *audit.Service, logger *log.Logger) *AppService {
@@ -50,8 +61,9 @@ func (s *AppService) Create(ctx context.Context, adminID int64, input AppCreateI
 		return domain.App{}, mapRepoError(err, "create app failed")
 	}
 
-	if err := s.syncAppAuthorization(ctx, app); err != nil {
+	if err := s.syncAllAppAuthorizations(ctx); err != nil {
 		_ = s.repo.HardDeleteApp(ctx, app.ID)
+		_ = s.syncAppDeletion(ctx, app.ID)
 		s.recordAppAudit(ctx, adminID, "CREATE", map[string]any{
 			"app_id":  app.ID,
 			"name":    app.Name,
@@ -87,8 +99,9 @@ func (s *AppService) Update(ctx context.Context, adminID int64, appID int64, inp
 		return domain.App{}, mapRepoError(err, "update app failed")
 	}
 
-	if err := s.syncAppAuthorization(ctx, updated); err != nil {
+	if err := s.syncAllAppAuthorizations(ctx); err != nil {
 		_ = s.repo.RestoreApp(ctx, existing)
+		_ = s.syncAppAuthorization(ctx, existing)
 		s.recordAppAudit(ctx, adminID, "UPDATE", map[string]any{
 			"app_id":  appID,
 			"success": false,
@@ -158,6 +171,31 @@ func (s *AppService) syncAppAuthorization(ctx context.Context, app domain.App) e
 		"disabled":   strconv.FormatBool(app.Disabled),
 		"updated_at": app.LastUpdateTime.UTC().Format(time.RFC3339Nano),
 	}).Err()
+}
+
+func (s *AppService) syncAllAppAuthorizations(ctx context.Context) error {
+	startedAt := time.Now()
+	if s.repo == nil {
+		err := errors.New("app repository is not configured")
+		s.logAppAuthorizationRefresh(ctx, startedAt, nil, nil, 0, false, err)
+		return err
+	}
+	apps, err := s.repo.ListEnabledApps(ctx)
+	if err != nil {
+		s.logAppAuthorizationRefresh(ctx, startedAt, nil, nil, 0, false, err)
+		return err
+	}
+	targetAppIDs := appIDs(apps)
+	refreshedAppIDs := make([]int64, 0, len(apps))
+	for _, app := range apps {
+		if err := s.syncAppAuthorization(ctx, app); err != nil {
+			s.logAppAuthorizationRefresh(ctx, startedAt, targetAppIDs, refreshedAppIDs, app.ID, false, err)
+			return err
+		}
+		refreshedAppIDs = append(refreshedAppIDs, app.ID)
+	}
+	s.logAppAuthorizationRefresh(ctx, startedAt, targetAppIDs, refreshedAppIDs, 0, true, nil)
+	return nil
 }
 
 func (s *AppService) syncAppDeletion(ctx context.Context, appID int64) error {
@@ -295,6 +333,40 @@ func (s *AppService) logAppChange(ctx context.Context, startedAt time.Time, even
 		logx.Int64("app_id", appID),
 	}, fields...)
 	logx.Info(s.logger, ctx, startedAt, event, message, fields...)
+}
+
+func (s *AppService) logAppAuthorizationRefresh(ctx context.Context, startedAt time.Time, targetAppIDs []int64, refreshedAppIDs []int64, failedAppID int64, success bool, err error) {
+	fields := []logx.Field{
+		logx.String("refresh_app_ids", joinAppIDs(targetAppIDs)),
+		logx.String("refreshed_app_ids", joinAppIDs(refreshedAppIDs)),
+		logx.Bool("refresh_success", success),
+	}
+	if failedAppID > 0 {
+		fields = append(fields, logx.Int64("failed_refresh_app_id", failedAppID))
+	}
+	if err != nil {
+		fields = append(fields, logx.Err(err))
+	}
+	logx.Info(s.logger, ctx, startedAt, "app.auth_refresh", "app authorization refresh finished", fields...)
+}
+
+func appIDs(apps []domain.App) []int64 {
+	ids := make([]int64, 0, len(apps))
+	for _, app := range apps {
+		ids = append(ids, app.ID)
+	}
+	return ids
+}
+
+func joinAppIDs(appIDs []int64) string {
+	if len(appIDs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(appIDs))
+	for _, appID := range appIDs {
+		parts = append(parts, strconv.FormatInt(appID, 10))
+	}
+	return strings.Join(parts, ",")
 }
 
 func parseInt64(value string) (int64, error) {
