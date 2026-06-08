@@ -39,10 +39,13 @@ FROM dockerhub.seobot.cc/library/alpine:3.21
 WORKDIR /app
 
 COPY --from=builder /out/ms-sar-dashboard /app/ms-sar-dashboard
+COPY admin/docker-entrypoint.sh /app/docker-entrypoint.sh
 COPY configs /app/configs
 COPY upgrade/sql /app/upgrade/sql
 
+RUN chmod +x /app/docker-entrypoint.sh
+
 EXPOSE 8081
 
-ENTRYPOINT ["/app/ms-sar-dashboard"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["-config", "/app/configs/prod.yaml"]
