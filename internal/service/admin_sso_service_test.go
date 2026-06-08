@@ -17,6 +17,26 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 )
 
+func TestAdminSSOServiceDisablesProxyOnHTTPClient(t *testing.T) {
+	service := NewAdminSSOService(config.SSOConfig{
+		Enabled:        true,
+		AdminUIURL:     "https://uc.example.com/uc-admin",
+		APIBaseURL:     "https://uc.example.com",
+		AppID:          "100001",
+		AppSecret:      "secret-1",
+		RedirectURL:    "https://sar.example.com/sar-admin",
+		RequestTimeout: time.Second,
+	}, auth.NewService(config.AuthConfig{JWTSecret: "test-secret", Issuer: "ms-sar-dashboard"}), audit.NewService(nil), log.New(io.Discard, "", 0))
+
+	transport, ok := service.httpClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected http transport, got %T", service.httpClient.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatal("expected sso http client proxy to be disabled")
+	}
+}
+
 func TestAdminSSOServiceStatusBuildsLoginURL(t *testing.T) {
 	service := NewAdminSSOService(config.SSOConfig{
 		Enabled:        true,

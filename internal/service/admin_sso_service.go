@@ -36,9 +36,11 @@ func NewAdminSSOService(cfg config.SSOConfig, tokens *auth.Service, auditSvc *au
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	return &AdminSSOService{
 		cfg:        cfg,
-		httpClient: &http.Client{Timeout: timeout},
+		httpClient: &http.Client{Timeout: timeout, Transport: transport},
 		tokens:     tokens,
 		audit:      auditSvc,
 		logger:     logger,
