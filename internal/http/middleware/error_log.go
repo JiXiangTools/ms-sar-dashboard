@@ -28,7 +28,7 @@ func ErrorLog(logger *log.Logger) gin.HandlerFunc {
 		if errorResponse.Status >= 500 {
 			level = logx.Error
 		}
-		level(logger, c.Request.Context(), requestStartedAt, "http.response_error", "error response",
+		fields := []logx.Field{
 			logx.String("method", c.Request.Method),
 			logx.String("path", c.Request.URL.Path),
 			logx.String("query", c.Request.URL.RawQuery),
@@ -36,6 +36,10 @@ func ErrorLog(logger *log.Logger) gin.HandlerFunc {
 			logx.Int("business_status", errorResponse.BusinessStatus),
 			logx.String("message", errorResponse.Message),
 			logx.String("client_ip", c.ClientIP()),
+		}
+		fields = appendErrorResponseLogFields(c, fields)
+		level(logger, c.Request.Context(), requestStartedAt, "http.response_error", "error response",
+			fields...,
 		)
 		response.MarkErrorLogged(c)
 	}

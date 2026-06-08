@@ -28,6 +28,7 @@ type ErrorResponseLog struct {
 	Status         int
 	BusinessStatus int
 	Message        string
+	Details        map[string]any
 }
 
 func Success(c *gin.Context, data any) {
@@ -54,6 +55,26 @@ func ErrorWithStatus(c *gin.Context, httpStatus int, businessStatus int, message
 		Message:        message,
 	})
 	JSONWithStatus(c, httpStatus, businessStatus, message, data)
+}
+
+func SetErrorLogDetails(c *gin.Context, details map[string]any) {
+	if c == nil || len(details) == 0 {
+		return
+	}
+	errorResponse, ok := ErrorResponseFromGin(c)
+	if !ok {
+		return
+	}
+	if errorResponse.Details == nil {
+		errorResponse.Details = make(map[string]any, len(details))
+	}
+	for key, value := range details {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		errorResponse.Details[key] = value
+	}
+	c.Set(ContextKeyErrorResponse, errorResponse)
 }
 
 func MarkErrorLogged(c *gin.Context) {

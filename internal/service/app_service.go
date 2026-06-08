@@ -25,6 +25,38 @@ type AppService struct {
 	logger *log.Logger
 }
 
+const (
+	appAuthReasonUnknown          = "unknown"
+	appAuthReasonInvalidAppID     = "appid_invalid"
+	appAuthReasonRedisReadFailed  = "redis_read_failed"
+	appAuthReasonRedisKeyNotFound = "redis_key_not_found"
+	appAuthReasonAppDisabled      = "app_disabled"
+	appAuthReasonSecretEmpty      = "secret_empty"
+	appAuthReasonSecretMismatch   = "secret_mismatch"
+)
+
+type appAuthFailure struct {
+	reason string
+	cause  error
+}
+
+func (e *appAuthFailure) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.cause == nil {
+		return e.reason
+	}
+	return e.cause.Error()
+}
+
+func (e *appAuthFailure) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
 type appRepository interface {
 	ListApps(ctx context.Context, appID *int64, name string, page int, pageSize int, includeDisabled bool) (domain.Page[domain.App], error)
 	ListEnabledApps(ctx context.Context) ([]domain.App, error)
@@ -185,7 +217,7 @@ func (s *AppService) Authorize(ctx context.Context, appID string, secret string)
 	rawAppID := strings.TrimSpace(appID)
 	rawSecret := strings.TrimSpace(secret)
 	if rawAppID == "" || rawSecret == "" {
-		return domain.App{}, apperror.Unauthorized("invalid app authorization", nil)
+		return domain.App{}, apperror.Unauthorized("invalid app authorization", &appAuthFailure{reason: appAuthReasonInvalidAppID})
 	}
 	return s.authorizeFromRedis(ctx, rawAppID, rawSecret)
 }
@@ -264,14 +296,19 @@ func (s *AppService) authorizeFromRedis(ctx context.Context, rawAppID string, ra
 	}
 	appID, err := parseInt64(rawAppID)
 	if err != nil || appID <= 0 {
-		return domain.App{}, apperror.Unauthorized("invalid app authorization", err)
+		return domain.App{}, apperror.Unauthorized("invalid app authorization", &appAuthFailure{reason: appAuthReasonInvalidAppID, cause: err})
 	}
 	record, err := s.readAppAuthRecord(ctx, appID)
 	if err != nil {
 		return domain.App{}, err
 	}
-	if !record.allows(rawSecret) {
-		return domain.App{}, apperror.Unauthorized("invalid app authorization", nil)
+	switch {
+	case record.Disabled:
+		return domain.App{}, apperror.Unauthorized("invalid app authorization", &appAuthFailure{reason: appAuthReasonAppDisabled})
+	case record.Secret == "":
+		return domain.App{}, apperror.Unauthorized("invalid app authorization", &appAuthFailure{reason: appAuthReasonSecretEmpty})
+	case record.Secret != rawSecret:
+		return domain.App{}, apperror.Unauthorized("invalid app authorization", &appAuthFailure{reason: appAuthReasonSecretMismatch})
 	}
 	return record.toApp(), nil
 }
@@ -364,14 +401,14 @@ func validateAppID(appID int64) error {
 func (s *AppService) readAppAuthRecord(ctx context.Context, appID int64) (AppAuthRecord, error) {
 	values, err := s.redis.HGetAll(ctx, appAuthKey(appID)).Result()
 	if err != nil {
-		return AppAuthRecord{}, apperror.Unauthorized("invalid app authorization", err)
+		return AppAuthRecord{}, apperror.Unauthorized("invalid app authorization", &appAuthFailure{reason: appAuthReasonRedisReadFailed, cause: err})
 	}
 	return parseAppAuthRecord(appID, values)
 }
 
 func parseAppAuthRecord(appID int64, values map[string]string) (AppAuthRecord, error) {
 	if len(values) == 0 {
-		return AppAuthRecord{}, apperror.Unauthorized("invalid app authorization", nil)
+		return AppAuthRecord{}, apperror.Unauthorized("invalid app authorization", &appAuthFailure{reason: appAuthReasonRedisKeyNotFound})
 	}
 	updatedAt, _ := time.Parse(time.RFC3339Nano, values["updated_at"])
 	return AppAuthRecord{
@@ -469,6 +506,20 @@ func joinAppIDs(appIDs []int64) string {
 
 func parseInt64(value string) (int64, error) {
 	return strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+}
+
+func AppAuthFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	if appErr, ok := apperror.As(err); ok && appErr.Cause != nil {
+		err = appErr.Cause
+	}
+	var target *appAuthFailure
+	if errors.As(err, &target) && strings.TrimSpace(target.reason) != "" {
+		return target.reason
+	}
+	return appAuthReasonUnknown
 }
 
 func mapRepoError(err error, message string) error {

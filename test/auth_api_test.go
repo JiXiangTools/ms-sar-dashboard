@@ -1,6 +1,7 @@
 package test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -64,6 +65,54 @@ func TestAppAuthorizeAPI(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	engine.ServeHTTP(recorder, request)
 	assertAuthAPIResponse(t, recorder, http.StatusBadRequest, "invalid request body", true)
+}
+
+func TestAppAuthorizeAPILogsDetailedFailureReason(t *testing.T) {
+	cases := []struct {
+		name        string
+		values      map[string]string
+		requestBody string
+		wantReason  string
+	}{
+		{
+			name:        "redis key not found",
+			values:      map[string]string{},
+			requestBody: `{"appid":100001,"secret":"secret-1"}`,
+			wantReason:  "redis_key_not_found",
+		},
+		{
+			name: "secret mismatch",
+			values: map[string]string{
+				"id":         "100001",
+				"secret":     "secret-1",
+				"disabled":   "false",
+				"updated_at": time.Now().UTC().Format(time.RFC3339Nano),
+			},
+			requestBody: `{"appid":100001,"secret":"wrong"}`,
+			wantReason:  "secret_mismatch",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			engine := newAuthAPITestRouterWithLogger(tc.values, nil, nil, log.New(&logs, "", 0))
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/app", strings.NewReader(tc.requestBody))
+			request.Header.Set("Content-Type", "application/json")
+			engine.ServeHTTP(recorder, request)
+
+			assertAuthAPIResponse(t, recorder, http.StatusUnauthorized, "invalid app authorization", true)
+			output := logs.String()
+			if !strings.Contains(output, "event=http.response_error") {
+				t.Fatalf("expected response error log, got %s", output)
+			}
+			if !strings.Contains(output, "auth_reason="+tc.wantReason) {
+				t.Fatalf("expected auth_reason %q in logs, got %s", tc.wantReason, output)
+			}
+		})
+	}
 }
 
 func TestListAuthorizedAppsAPI(t *testing.T) {
@@ -163,10 +212,14 @@ func TestAdminSSOLoginAPI(t *testing.T) {
 }
 
 func newAuthAPITestRouter(values map[string]string, stringValues map[string]string, err error) http.Handler {
-	apps := service.NewAppService(nil, &fakeAuthRedis{values: values, stringValues: stringValues, err: err}, audit.NewService(nil), log.New(io.Discard, "", 0))
+	return newAuthAPITestRouterWithLogger(values, stringValues, err, log.New(io.Discard, "", 0))
+}
+
+func newAuthAPITestRouterWithLogger(values map[string]string, stringValues map[string]string, err error, logger *log.Logger) http.Handler {
+	apps := service.NewAppService(nil, &fakeAuthRedis{values: values, stringValues: stringValues, err: err}, audit.NewService(nil), logger)
 	return router.New(config.Config{
 		App: config.AppConfig{Env: "test"},
-	}, log.New(io.Discard, "", 0), router.Dependencies{
+	}, logger, router.Dependencies{
 		Services: &service.Container{Apps: apps},
 	})
 }
