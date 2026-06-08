@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/auth"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/router"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/service"
@@ -101,12 +102,109 @@ func TestListAuthorizedAppsAPI(t *testing.T) {
 	}
 }
 
+func TestAdminSSOStatusAPI(t *testing.T) {
+	engine := newSSOAPITestRouter(t, http.StatusOK, `{"status":200,"message":"success","data":{"admin_id":7,"account":"root","nickname":"管理员","permissions":["APP"]},"request_id":"0000000000000001"}`)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/auth/sso", nil)
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			Enabled  bool   `json:"enabled"`
+			LoginURL string `json:"login_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Status != http.StatusOK || payload.Message != "success" || !payload.Data.Enabled {
+		t.Fatalf("unexpected response: %#v", payload)
+	}
+	if !strings.Contains(payload.Data.LoginURL, "/uc-admin?") || !strings.Contains(payload.Data.LoginURL, "redirect_url=") {
+		t.Fatalf("unexpected login_url: %s", payload.Data.LoginURL)
+	}
+}
+
+func TestAdminSSOLoginAPI(t *testing.T) {
+	engine := newSSOAPITestRouter(t, http.StatusOK, `{"status":200,"message":"success","data":{"admin_id":7,"account":"root","nickname":"管理员","permissions":["APP"]},"request_id":"0000000000000001"}`)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/auth/sso/login", strings.NewReader(`{"token":"cas-token-1"}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			AccessToken string `json:"access_token"`
+			TokenType   string `json:"token_type"`
+			ExpiresIn   int64  `json:"expires_in"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Status != http.StatusOK || payload.Message != "success" {
+		t.Fatalf("unexpected response: %#v", payload)
+	}
+	if payload.Data.AccessToken == "" || payload.Data.TokenType != "Bearer" || payload.Data.ExpiresIn <= 0 {
+		t.Fatalf("unexpected login data: %#v", payload.Data)
+	}
+}
+
 func newAuthAPITestRouter(values map[string]string, stringValues map[string]string, err error) http.Handler {
 	apps := service.NewAppService(nil, &fakeAuthRedis{values: values, stringValues: stringValues, err: err}, audit.NewService(nil), log.New(io.Discard, "", 0))
 	return router.New(config.Config{
 		App: config.AppConfig{Env: "test"},
 	}, log.New(io.Discard, "", 0), router.Dependencies{
 		Services: &service.Container{Apps: apps},
+	})
+}
+
+func newSSOAPITestRouter(t *testing.T, statusCode int, body string) http.Handler {
+	t.Helper()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/cas/admin" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(upstream.Close)
+
+	tokenService := auth.NewService(config.AuthConfig{
+		JWTSecret:      "ms-sar-dashboard-test-secret",
+		AccessTokenTTL: 2 * time.Hour,
+		Issuer:         "ms-sar-dashboard",
+	})
+	sso := service.NewAdminSSOService(config.SSOConfig{
+		Enabled:        true,
+		AdminUIURL:     upstream.URL + "/uc-admin",
+		APIBaseURL:     upstream.URL,
+		AppID:          "100001",
+		AppSecret:      "secret-1",
+		RedirectURL:    "http://127.0.0.1:18081/sar-admin",
+		RequestTimeout: time.Second,
+	}, tokenService, audit.NewService(nil), log.New(io.Discard, "", 0))
+
+	return router.New(config.Config{
+		App: config.AppConfig{Env: "test"},
+	}, log.New(io.Discard, "", 0), router.Dependencies{
+		Services: &service.Container{
+			Auth: service.NewAdminAuthService(nil, tokenService, audit.NewService(nil), log.New(io.Discard, "", 0)),
+			SSO:  sso,
+		},
 	})
 }
 

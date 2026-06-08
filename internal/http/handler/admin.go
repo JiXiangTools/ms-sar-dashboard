@@ -15,6 +15,7 @@ import (
 
 type AdminHandler struct {
 	auth  *service.AdminAuthService
+	sso   *service.AdminSSOService
 	apps  *service.AppService
 	logs  *service.LogService
 	debug *service.DebugService
@@ -23,6 +24,10 @@ type AdminHandler struct {
 type loginRequest struct {
 	Name     string `json:"name"`
 	Password string `json:"password"`
+}
+
+type ssoLoginRequest struct {
+	Token string `json:"token"`
 }
 
 type createAppRequest struct {
@@ -73,8 +78,8 @@ type esRawDebugRequest struct {
 	Input  string `json:"input"`
 }
 
-func NewAdminHandler(auth *service.AdminAuthService, apps *service.AppService, logs *service.LogService, debug *service.DebugService) *AdminHandler {
-	return &AdminHandler{auth: auth, apps: apps, logs: logs, debug: debug}
+func NewAdminHandler(auth *service.AdminAuthService, sso *service.AdminSSOService, apps *service.AppService, logs *service.LogService, debug *service.DebugService) *AdminHandler {
+	return &AdminHandler{auth: auth, sso: sso, apps: apps, logs: logs, debug: debug}
 }
 
 func (h *AdminHandler) Login(c *gin.Context) {
@@ -102,6 +107,38 @@ func (h *AdminHandler) Logout(c *gin.Context) {
 		}
 	}
 	response.Success(c, gin.H{"success": true})
+}
+
+func (h *AdminHandler) SSOStatus(c *gin.Context) {
+	if h.sso == nil {
+		response.Success(c, service.AdminSSOStatus{Enabled: false})
+		return
+	}
+	status, err := h.sso.Status(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	response.Success(c, status)
+}
+
+func (h *AdminHandler) SSOLogin(c *gin.Context) {
+	req, ok := bindJSON[ssoLoginRequest](c)
+	if !ok {
+		return
+	}
+	if h.sso == nil {
+		response.Error(c, http.StatusForbidden, "sso disabled", nil)
+		return
+	}
+	result, err := h.sso.Login(c.Request.Context(), service.AdminSSOLoginInput{
+		Token: req.Token,
+	})
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 func (h *AdminHandler) AppAuthorize(c *gin.Context) {

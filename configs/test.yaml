@@ -12,6 +12,15 @@ auth:
   access_token_ttl: 2h
   issuer: ms-sar-dashboard
 
+sso:
+  enabled: true
+  admin_ui_url: "http://server.muguayun.top:8589/uc-admin"
+  api_base_url: "http://server.muguayun.top:8589/"
+  app_id: "100001"
+  app_secret: "be15884351173848c685cc5d508a783b60ebe24c1b5205dc"
+  redirect_url: "http://server.muguayun.top:8588/sar-admin"
+  request_timeout: 3s
+
 log:
   level: debug
 

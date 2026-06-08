@@ -47,10 +47,12 @@ func New(cfg config.Config, logger *log.Logger, deps Dependencies) *gin.Engine {
 
 	api := engine.Group("/api/v1/admin")
 	if deps.Services != nil {
-		adminHandler := handler.NewAdminHandler(deps.Services.Auth, deps.Services.Apps, deps.Services.Logs, deps.Services.Debug)
+		adminHandler := handler.NewAdminHandler(deps.Services.Auth, deps.Services.SSO, deps.Services.Apps, deps.Services.Logs, deps.Services.Debug)
 		engine.GET("/api/v1/auth/app", adminHandler.ListAuthorizedApps)
 		engine.POST("/api/v1/auth/app", adminHandler.AppAuthorize)
 		api.POST("/auth/login", adminHandler.Login)
+		api.GET("/auth/sso", adminHandler.SSOStatus)
+		api.POST("/auth/sso/login", adminHandler.SSOLogin)
 
 		authorized := api.Group("")
 		authorized.Use(middleware.AdminAuth(deps.Services.Auth))

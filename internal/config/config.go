@@ -19,6 +19,7 @@ const envPrefix = "MSSAR"
 type Config struct {
 	App            AppConfig            `mapstructure:"app"`
 	Auth           AuthConfig           `mapstructure:"auth"`
+	SSO            SSOConfig            `mapstructure:"sso"`
 	Log            LogConfig            `mapstructure:"log"`
 	Database       DatabaseConfig       `mapstructure:"database"`
 	Redis          RedisConfig          `mapstructure:"redis"`
@@ -45,6 +46,16 @@ type AuthConfig struct {
 	JWTSecret      string        `mapstructure:"jwt_secret"`
 	AccessTokenTTL time.Duration `mapstructure:"access_token_ttl"`
 	Issuer         string        `mapstructure:"issuer"`
+}
+
+type SSOConfig struct {
+	Enabled        bool          `mapstructure:"enabled"`
+	AdminUIURL     string        `mapstructure:"admin_ui_url"`
+	APIBaseURL     string        `mapstructure:"api_base_url"`
+	AppID          string        `mapstructure:"app_id"`
+	AppSecret      string        `mapstructure:"app_secret"`
+	RedirectURL    string        `mapstructure:"redirect_url"`
+	RequestTimeout time.Duration `mapstructure:"request_timeout"`
 }
 
 type DatabaseConfig struct {
@@ -140,6 +151,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.jwt_secret", "ms-sar-dashboard-dev-secret")
 	v.SetDefault("auth.access_token_ttl", "2h")
 	v.SetDefault("auth.issuer", version.Name)
+
+	v.SetDefault("sso.enabled", false)
+	v.SetDefault("sso.admin_ui_url", "")
+	v.SetDefault("sso.api_base_url", "")
+	v.SetDefault("sso.app_id", "")
+	v.SetDefault("sso.app_secret", "")
+	v.SetDefault("sso.redirect_url", "")
+	v.SetDefault("sso.request_timeout", "3s")
 
 	v.SetDefault("log.level", "info")
 

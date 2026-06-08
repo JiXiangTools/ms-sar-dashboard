@@ -10,10 +10,12 @@
 - `ms-data-receiver` 不再保存管理员账号、登录配置或应用配置文件，只在客户端上报时使用授权信息。
 - 客户端上报链路仍由 `ms-data-receiver` 负责：校验授权、校验商品/行为数据、写 Kafka。
 - 后台管理链路由 `ms-sar-dashboard` 负责：登录、token、管理员、应用授权配置、审计和后续搜广推运营管理页面。
+- 可选对接 `ms-user-center` 管理端 CAS 单点登录；单点登录成功后仍由 dashboard 签发本地 JWT。
 
 ## 首期功能
 
 - 账号密码登录，登录成功和失败都必须记录日志。
+- 可选单点登录。
 - 授权应用管理：新增、删除、修改、分页列表。
 
 ## 文档导航
@@ -124,6 +126,25 @@ CONFIG_PATH=./configs/test.yaml ./admin/start-debug.sh
 ```text
 http://127.0.0.1:8081/sar-admin
 ```
+
+如果要启用 `ms-user-center` 单点登录，需要补充以下配置：
+
+```yaml
+sso:
+  enabled: true
+  admin_ui_url: https://uc.example.com/uc-admin
+  api_base_url: https://uc.example.com
+  app_id: "100001"
+  app_secret: "secret-from-user-center"
+  redirect_url: https://sar.example.com/sar-admin
+  request_timeout: 3s
+```
+
+说明：
+
+- `app_id` / `app_secret` 对应 `ms-user-center` 里的 CAS 应用配置。
+- `redirect_url` 需要回到 dashboard 登录页，例如 `/sar-admin`。
+- 前端不会持有 `app_secret`；跳转 URL 和 CAS 换票都由 dashboard 服务端完成。
 
 ## 测试
 

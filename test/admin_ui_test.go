@@ -40,13 +40,14 @@ func TestAdminUIEndpointServesLoginEntry(t *testing.T) {
 		"ms-sar-dashboard / sar-admin",
 		`<body class="auth-backdrop-open auth-modal-open">`,
 		`id="login-form"`,
+		`id="sso-login-button"`,
 		`id="close-login-modal" aria-label="关闭登录弹框" disabled`,
 		`id="secret-reveal-panel"`,
 		`role="dialog"`,
 		"管理员登录",
 		`id="login-error"`,
 		`id="session-panel"`,
-		`/sar-admin/assets/app.js?v=20260520-secret`,
+		`/sar-admin/assets/app.js?v=20260608-sso`,
 	}
 	for _, value := range required {
 		if !strings.Contains(body, value) {
@@ -76,6 +77,8 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 	required := []string{
 		`const storageKey = "mssar.admin.session"`,
 		`/api/v1/admin/auth/login`,
+		`/api/v1/admin/auth/sso`,
+		`/api/v1/admin/auth/sso/login`,
 		`Authorization: ` + "`Bearer ${state.accessToken}`",
 		`sessionStorage`,
 		`generateAppSecret`,
@@ -98,6 +101,8 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 		`/api/v1/admin/debug/es/raw`,
 		`/api/v1/admin/debug/rec`,
 		`连接服务失败，请确认 sar-admin 服务已启动，并刷新页面后重试。`,
+		`readSSOToken`,
+		`单点登录`,
 	}
 	for _, value := range required {
 		if !strings.Contains(body, value) {
@@ -125,5 +130,8 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "body.auth-modal-open .login-form") {
 		t.Fatalf("expected css asset to include auth modal styling")
+	}
+	if !strings.Contains(recorder.Body.String(), ".login-actions") {
+		t.Fatalf("expected css asset to include sso login action layout")
 	}
 }

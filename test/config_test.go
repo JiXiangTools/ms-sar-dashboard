@@ -24,4 +24,13 @@ func TestLoadTestConfig(t *testing.T) {
 	if len(cfg.Redis.Addrs) != 1 {
 		t.Fatalf("expected one redis addr, got %d", len(cfg.Redis.Addrs))
 	}
+	if !cfg.SSO.Enabled {
+		t.Fatal("expected test config sso to be enabled")
+	}
+	if cfg.SSO.APIBaseURL != "http://server.muguayun.top:8589/" {
+		t.Fatalf("unexpected sso api_base_url: %s", cfg.SSO.APIBaseURL)
+	}
+	if cfg.SSO.RedirectURL != "http://server.muguayun.top:8588/sar-admin" {
+		t.Fatalf("unexpected sso redirect_url: %s", cfg.SSO.RedirectURL)
+	}
 }

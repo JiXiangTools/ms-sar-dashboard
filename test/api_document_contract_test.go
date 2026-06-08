@@ -10,6 +10,8 @@ func TestAdminAPIDocumentContainsCoreContract(t *testing.T) {
 
 	required := []string{
 		"/api/v1/admin/auth/login",
+		"/api/v1/admin/auth/sso",
+		"/api/v1/admin/auth/sso/login",
 		"/api/v1/admin/app",
 		"/api/v1/auth/app",
 		"/api/v1/admin/debug/es/index/{appid}",

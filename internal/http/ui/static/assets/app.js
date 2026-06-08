@@ -39,6 +39,12 @@ const state = {
   accessToken: "",
   adminID: 0,
   adminName: "",
+  sso: {
+    enabled: false,
+    loginURL: "",
+    loading: false,
+    processing: false
+  },
   loginOpen: true,
   loginError: "",
   loading: false,
@@ -77,6 +83,7 @@ const loginForm = document.getElementById("login-form");
 const loginNameInput = document.getElementById("login-name");
 const loginPasswordInput = document.getElementById("login-password");
 const loginButton = document.getElementById("open-login-button");
+const ssoLoginButton = document.getElementById("sso-login-button");
 const closeLoginButton = document.getElementById("close-login-modal");
 const sessionPanel = document.getElementById("session-panel");
 const sessionName = document.getElementById("session-name");
@@ -123,6 +130,10 @@ function hasSession() {
   return Boolean(state.accessToken);
 }
 
+function resolveJWTDisplayName(payload, fallback = "") {
+  return payload?.admin_nickname || payload?.sub || fallback;
+}
+
 function persistSession() {
   if (!state.accessToken) {
     window.sessionStorage.removeItem(storageKey);
@@ -148,7 +159,7 @@ function restoreSession() {
     state.accessToken = session.accessToken || "";
     const payload = decodeJWTPayload(state.accessToken);
     state.adminID = Number(session.adminID || payload.admin_id || 0);
-    state.adminName = session.adminName || payload.sub || "";
+    state.adminName = session.adminName || resolveJWTDisplayName(payload, "");
     state.loginOpen = !state.accessToken;
   } catch (_error) {
     window.sessionStorage.removeItem(storageKey);
@@ -278,6 +289,123 @@ async function requestAdminData(path, options = {}) {
   return payload.data;
 }
 
+async function requestPublicData(path, options = {}) {
+  const requestOptions = {
+    method: options.method || "GET",
+    headers: {
+      ...(options.headers || {})
+    }
+  };
+
+  if (Object.prototype.hasOwnProperty.call(options, "json")) {
+    requestOptions.body = JSON.stringify(options.json);
+    requestOptions.headers["Content-Type"] = "application/json";
+  } else if (Object.prototype.hasOwnProperty.call(options, "body")) {
+    requestOptions.body = options.body;
+  }
+
+  let response;
+  try {
+    response = await window.fetch(path, requestOptions);
+  } catch (_error) {
+    throw new Error("连接服务失败，请确认 sar-admin 服务已启动，并刷新页面后重试。");
+  }
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.status !== 200) {
+    throw new Error(payload?.message || "请求失败");
+  }
+  return payload.data;
+}
+
+function readSSOToken() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("token") || "";
+}
+
+function clearSSOToken() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("token");
+  const nextURL = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, document.title, nextURL || "/sar-admin");
+}
+
+async function loadSSOStatus() {
+  state.sso.loading = true;
+  try {
+    const data = await requestPublicData("/api/v1/admin/auth/sso");
+    state.sso.enabled = Boolean(data?.enabled);
+    state.sso.loginURL = String(data?.login_url || "");
+  } catch (_error) {
+    state.sso.enabled = false;
+    state.sso.loginURL = "";
+  } finally {
+    state.sso.loading = false;
+    renderAuth();
+  }
+}
+
+async function startSSOLogin() {
+  state.loginError = "";
+  state.sso.processing = true;
+  setFeedback("正在跳转单点登录...");
+  renderWorkspace();
+  try {
+    const data = await requestPublicData("/api/v1/admin/auth/sso");
+    const loginURL = String(data?.login_url || "");
+    if (!data?.enabled || !loginURL) {
+      throw new Error("单点登录未启用");
+    }
+    window.location.href = loginURL;
+  } catch (error) {
+    state.sso.processing = false;
+    state.loginError = error instanceof Error ? error.message : "单点登录失败";
+    setFeedback("", "error");
+    renderWorkspace();
+  }
+}
+
+async function completeSSOLogin(token) {
+  const casToken = String(token || "").trim();
+  if (!casToken) {
+    return false;
+  }
+
+  clearSession();
+  state.sso.processing = true;
+  state.loginError = "";
+  state.loginOpen = false;
+  setFeedback("正在完成单点登录...");
+  renderWorkspace();
+
+  try {
+    const result = await requestPublicData("/api/v1/admin/auth/sso/login", {
+      method: "POST",
+      json: { token: casToken }
+    });
+    state.accessToken = result?.access_token || "";
+    const jwtPayload = decodeJWTPayload(state.accessToken);
+    state.adminID = Number(jwtPayload.admin_id || 0);
+    state.adminName = resolveJWTDisplayName(jwtPayload, "已登录");
+    state.sso.processing = false;
+    state.loginOpen = false;
+    persistSession();
+    clearSSOToken();
+    setFeedback("单点登录成功。");
+    renderWorkspace();
+    await loadActiveView(true);
+    return true;
+  } catch (error) {
+    clearSSOToken();
+    clearSession();
+    state.sso.processing = false;
+    state.loginError = error instanceof Error ? error.message : "单点登录失败";
+    setFeedback("", "error");
+    renderWorkspace();
+    loginNameInput.focus();
+    return false;
+  }
+}
+
 function getQueryString(view) {
   const params = new URLSearchParams();
   params.set("page", String(state.page[view] || 1));
@@ -322,6 +450,8 @@ function renderAuth() {
   document.body.classList.toggle("auth-modal-open", showLogin);
   loginForm.classList.toggle("hidden", !showLogin);
   loginButton.classList.toggle("hidden", loggedIn || showLogin);
+  ssoLoginButton.classList.toggle("hidden", !showLogin || !state.sso.enabled);
+  ssoLoginButton.disabled = state.sso.loading || state.sso.processing;
   closeLoginButton.classList.toggle("hidden", !loggedIn);
   closeLoginButton.disabled = !loggedIn;
   sessionPanel.classList.toggle("hidden", !loggedIn);
@@ -1045,6 +1175,10 @@ function bindAuthEvents() {
     loginNameInput.focus();
   });
 
+  ssoLoginButton.addEventListener("click", () => {
+    startSSOLogin();
+  });
+
   loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = loginNameInput.value.trim();
@@ -1074,7 +1208,7 @@ function bindAuthEvents() {
       state.accessToken = payload.data?.access_token || "";
       const jwtPayload = decodeJWTPayload(state.accessToken);
       state.adminID = Number(jwtPayload.admin_id || 0);
-      state.adminName = jwtPayload.sub || name;
+      state.adminName = resolveJWTDisplayName(jwtPayload, name);
       state.loginOpen = false;
       loginPasswordInput.value = "";
       persistSession();
@@ -1258,6 +1392,12 @@ function init() {
   restoreSession();
   bindAuthEvents();
   bindWorkspaceEvents();
+  loadSSOStatus();
+  const ssoToken = readSSOToken();
+  if (ssoToken) {
+    completeSSOLogin(ssoToken);
+    return;
+  }
   renderWorkspace();
   if (hasSession()) {
     loadActiveView(false);

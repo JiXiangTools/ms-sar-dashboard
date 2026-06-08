@@ -43,6 +43,8 @@ Authorization: Bearer <access_token>
 | --- | --- | --- | --- |
 | `GET` | `/health` | 否 | 健康检查 |
 | `POST` | `/api/v1/admin/auth/login` | 否 | 登录 |
+| `GET` | `/api/v1/admin/auth/sso` | 否 | 获取单点登录入口 |
+| `POST` | `/api/v1/admin/auth/sso/login` | 否 | 使用 CAS token 完成单点登录 |
 | `POST` | `/api/v1/admin/auth/logout` | 是 | 退出登录 |
 | `GET` | `/api/v1/auth/app` | 否 | 有效应用 appid 列表 |
 | `POST` | `/api/v1/auth/app` | 否 | 应用授权校验 |
@@ -93,6 +95,67 @@ POST /api/v1/admin/auth/login
 - 登录失败写 `t_admin_log`：`cate=AUTH`，`type=LOGIN_FAILED`。
 - 日志不得记录密码和 token。
 - 登录失败对外统一返回 `invalid admin credentials`。
+
+### 3.1 单点登录入口
+
+```http
+GET /api/v1/admin/auth/sso
+```
+
+响应：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "data": {
+    "enabled": true,
+    "login_url": "https://uc.example.com/uc-admin?redirect_url=https%3A%2F%2Fsar.example.com%2Fsar-admin&appid=100001&appsecret=<md5签名>"
+  },
+  "request_id": "0000000000000001"
+}
+```
+
+规则：
+
+- `enabled=false` 时表示当前环境未启用单点登录。
+- `login_url` 由 dashboard 服务端生成，前端不得自行拼接或暴露应用 secret。
+- `appsecret` 规则与 `ms-user-center` 一致：`md5(appid + app_secret + yyyyMMdd).lower()`。
+
+### 3.2 使用 CAS Token 完成单点登录
+
+```http
+POST /api/v1/admin/auth/sso/login
+Content-Type: application/json
+```
+
+请求：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `token` | string | 是 | `ms-user-center /api/v1/admin/cas/token` 返回的随机 CAS token |
+
+成功响应：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "data": {
+    "access_token": "<access_token>",
+    "token_type": "Bearer",
+    "expires_in": 7200
+  },
+  "request_id": "0000000000000001"
+}
+```
+
+规则：
+
+- dashboard 服务端通过 `POST /api/v1/admin/cas/admin` 向 `ms-user-center` 查询管理员信息。
+- CAS token 无效、已过期或查询失败时返回失败。
+- 查询成功后，dashboard 本地签发管理端 JWT，并继续沿用 `Authorization: Bearer <access_token>`。
+- 单点登录成功和失败同样写 `t_admin_log` 的 `LOGIN_SUCCESS` / `LOGIN_FAILED`。
 
 ## 4. 应用列表
 

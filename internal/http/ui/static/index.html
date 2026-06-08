@@ -57,7 +57,10 @@
                 <span class="form-label">密码</span>
                 <input id="login-password" type="password" autocomplete="current-password" placeholder="请输入登录密码" />
               </label>
-              <button class="button primary" type="submit">登录</button>
+              <div class="login-actions">
+                <button class="button primary" type="submit">登录</button>
+                <button id="sso-login-button" class="button secondary hidden" type="button">单点登录</button>
+              </div>
             </form>
 
             <button id="open-login-button" class="button primary hidden" type="button">登录</button>
@@ -92,6 +95,6 @@
       </main>
     </div>
 
-    <script src="/sar-admin/assets/app.js?v=20260520-secret"></script>
+    <script src="/sar-admin/assets/app.js?v=20260608-sso"></script>
   </body>
 </html>

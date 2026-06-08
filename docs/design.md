@@ -14,6 +14,7 @@
 - PostgreSQL 是管理端事实源：管理员、应用、审计日志都在数据库。
 - dashboard 授权 API 是在线服务唯一授权入口；dashboard 内部维护 Redis 授权投影 `app_auth_{appid}` 和 `app_auth_allappids`。
 - 管理端身份使用账号密码登录后签发短期 JWT。
+- 可选接入 `ms-user-center` 的 CAS 单点登录；CAS 换票成功后仍由 dashboard 签发本地短期 JWT。
 - 在线服务身份使用请求头 `x-dwzauth-appid` + `x-dwzauth-secret`。
 
 不做多套授权来源，不做 dashboard 到在线服务的鉴权代理，不在首期做管理员管理 UI，不在 debug 页面写 ES 或 Redis。
@@ -25,6 +26,7 @@
 首期目标：
 
 - 通过账号密码登录 dashboard。
+- 可选通过 `ms-user-center` 单点登录进入 dashboard。
 - 登录成功和失败都记录到审计日志。
 - 新增、修改、删除授权应用。
 - 分页查询授权应用列表。
@@ -53,6 +55,15 @@
                          +------------------+
 管理员浏览器  ----------> | ms-sar-dashboard |
                          +------------------+
+                           | optional CAS
+                           |   /api/v1/admin/cas/admin
+                           v
+                        ms-user-center
+                           ^
+                           |
+                     /uc-admin?...
+                           |
+                           v
                            | PostgreSQL
                            |   t_admin
                            |   t_app
@@ -77,6 +88,14 @@ ms-data-receiver     ms-rec-online      ms-search-online
 3. dashboard 同步内部 Redis 授权投影 `app_auth_{appid}` 和 `app_auth_allappids`。
 4. 三个在线服务收到请求后，调用 dashboard 授权接口校验。
 
+单点登录数据流：
+
+1. 管理员在 dashboard 登录框点击“单点登录”。
+2. dashboard 服务端生成 `ms-user-center /uc-admin` 跳转地址，并计算 CAS `appsecret` 签名。
+3. `ms-user-center` 校验应用信息，完成管理员身份确认后，把 `token=<cas_token>` 带回 dashboard 的 `redirect_url`。
+4. dashboard 服务端使用 CAS token 调用 `ms-user-center /api/v1/admin/cas/admin` 查询管理员信息。
+5. 查询成功后，dashboard 本地签发管理端 JWT，后续请求继续使用本地 `Authorization: Bearer <jwt>`。
+
 核心约束：
 
 - PostgreSQL 是后台管理事实源。
@@ -91,6 +110,7 @@ ms-data-receiver     ms-rec-online      ms-search-online
 负责：
 
 - 管理员账号密码登录。
+- 对接 `ms-user-center` 单点登录。
 - 签发管理端 JWT access token。
 - 记录登录成功、登录失败、应用变更和 debug 操作日志。
 - 应用授权配置增删改查。
@@ -169,6 +189,15 @@ auth:
   access_token_ttl: 2h
   issuer: ms-sar-dashboard
 
+sso:
+  enabled: false
+  admin_ui_url: https://uc.example.com/uc-admin
+  api_base_url: https://uc.example.com
+  app_id: "100001"
+  app_secret: "secret-from-user-center"
+  redirect_url: https://sar.example.com/sar-admin
+  request_timeout: 3s
+
 database:
   dsn: postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard?sslmode=disable
   max_open_conns: 20
@@ -207,6 +236,8 @@ recommend_debug:
 说明：
 
 - 管理员初始账号通过 SQL seed 写入数据库，不在配置文件中放明文密码。
+- `sso.enabled=true` 时，dashboard 登录页显示“单点登录”按钮；本地账号密码登录仍保留。
+- `sso.app_secret` 只允许保存在服务端配置中，不得下发到浏览器。
 - dashboard 使用 Redis 同步应用授权；推荐 Debug 从授权投影读取 Secret 后调用 `ms-rec-online`。
 - `recommend_debug.online_base_url` 指向推荐在线服务，默认匹配 `services-deploy/search-rec-ad` 的本地端口。
 

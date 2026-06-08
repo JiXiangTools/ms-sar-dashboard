@@ -13,6 +13,22 @@ type LoginOutput struct {
 	ExpiresIn   int64  `json:"expires_in"`
 }
 
+type AdminSSOStatus struct {
+	Enabled  bool   `json:"enabled"`
+	LoginURL string `json:"login_url,omitempty"`
+}
+
+type AdminSSOLoginInput struct {
+	Token string
+}
+
+type AdminSSOAdmin struct {
+	AdminID     int64    `json:"admin_id"`
+	Account     string   `json:"account"`
+	Nickname    string   `json:"nickname"`
+	Permissions []string `json:"permissions"`
+}
+
 type AppListQuery struct {
 	AppID    *int64
 	Name     string

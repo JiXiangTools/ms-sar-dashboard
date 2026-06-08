@@ -12,6 +12,15 @@ auth:
   access_token_ttl: 2h
   issuer: ms-sar-dashboard
 
+sso:
+  enabled: false
+  admin_ui_url: ""
+  api_base_url: ""
+  app_id: ""
+  app_secret: ""
+  redirect_url: ""
+  request_timeout: 3s
+
 log:
   level: info
 
