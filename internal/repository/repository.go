@@ -108,6 +108,48 @@ func (r *Repository) GetAdminByID(ctx context.Context, id int64) (domain.Admin, 
 	return toAdmin(model), nil
 }
 
+func (r *Repository) SyncSSOAdmin(ctx context.Context, admin domain.Admin) (domain.Admin, error) {
+	name := strings.TrimSpace(admin.Name)
+	if name == "" {
+		return domain.Admin{}, errors.New("admin name is required")
+	}
+	nickname := strings.TrimSpace(admin.Nickname)
+	now := nowValue()
+
+	var synced domain.Admin
+	err := r.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var model adminModel
+		err := tx.Where("name = ?", name).First(&model).Error
+		switch {
+		case err == nil:
+			model.Nickname = nickname
+			model.LastUpdateTime = now
+			if err := tx.Save(&model).Error; err != nil {
+				return mapSQLError(err)
+			}
+			synced = toAdmin(model)
+			return nil
+		case errors.Is(mapSQLError(err), ErrNotFound):
+			model = adminModel{
+				Name:           name,
+				Nickname:       nickname,
+				Password:       "",
+				Disabled:       false,
+				CreateTime:     now,
+				LastUpdateTime: now,
+			}
+			if err := tx.Create(&model).Error; err != nil {
+				return mapSQLError(err)
+			}
+			synced = toAdmin(model)
+			return nil
+		default:
+			return mapSQLError(err)
+		}
+	})
+	return synced, mapSQLError(err)
+}
+
 func (r *Repository) ListApps(ctx context.Context, appID *int64, name string, page int, pageSize int, includeDisabled bool) (domain.Page[domain.App], error) {
 	page, pageSize = normalizePagination(page, pageSize)
 	query := r.orm.WithContext(ctx).Model(&appModel{})

@@ -154,7 +154,8 @@ Content-Type: application/json
 
 - dashboard 服务端通过 `POST /api/v1/admin/cas/admin` 向 `ms-user-center` 查询管理员信息。
 - CAS token 无效、已过期或查询失败时返回失败。
-- 查询成功后，dashboard 本地签发管理端 JWT，并继续沿用 `Authorization: Bearer <access_token>`。
+- 查询成功后，dashboard 按用户中心 `account` 同步到本地 `t_admin.name`，再使用本地 `t_admin.id` 签发管理端 JWT。
+- 后续管理端鉴权统一查询 `t_admin` 并校验 `disabled` 和 `last_update_time`，不再直接信任用户中心返回值或 JWT claims 作为管理员事实源。
 - 单点登录成功和失败同样写 `t_admin_log` 的 `LOGIN_SUCCESS` / `LOGIN_FAILED`。
 
 ## 4. 应用列表

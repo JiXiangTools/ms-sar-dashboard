@@ -19,7 +19,6 @@ type Claims struct {
 	TokenType      string `json:"token_type"`
 	AdminUpdatedAt int64  `json:"admin_updated_at"`
 	AdminNickname  string `json:"admin_nickname,omitempty"`
-	AuthSource     string `json:"auth_source,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -68,30 +67,9 @@ func (s *Service) IssueAccessToken(admin domain.Admin) (string, error) {
 		TokenType:      TokenTypeAccess,
 		AdminUpdatedAt: admin.LastUpdateTime.UTC().UnixNano(),
 		AdminNickname:  strings.TrimSpace(admin.Nickname),
-		AuthSource:     "local",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer,
 			Subject:   strings.TrimSpace(admin.Name),
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTokenTTL)),
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(s.secret)
-}
-
-func (s *Service) IssueSSOAccessToken(adminID int64, account string, nickname string) (string, error) {
-	now := time.Now().UTC()
-	claims := Claims{
-		AdminID:        adminID,
-		TokenType:      TokenTypeAccess,
-		AdminUpdatedAt: 0,
-		AdminNickname:  strings.TrimSpace(nickname),
-		AuthSource:     "sso",
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    s.issuer,
-			Subject:   strings.TrimSpace(account),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTokenTTL)),

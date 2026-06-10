@@ -145,6 +145,7 @@ sso:
 - `app_id` / `app_secret` 对应 `ms-user-center` 里的 CAS 应用配置。
 - `redirect_url` 需要回到 dashboard 登录页，例如 `/sar-admin`。
 - 前端不会持有 `app_secret`；跳转 URL 和 CAS 换票都由 dashboard 服务端完成。
+- 单点登录成功后会按用户中心 `account` 同步到本地 `t_admin.name`，后续鉴权统一以 `t_admin` 为事实源。
 
 ## 测试
 

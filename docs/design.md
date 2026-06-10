@@ -94,11 +94,13 @@ ms-data-receiver     ms-rec-online      ms-search-online
 2. dashboard 服务端生成 `ms-user-center /uc-admin` 跳转地址，并计算 CAS `appsecret` 签名。
 3. `ms-user-center` 校验应用信息，完成管理员身份确认后，把 `token=<cas_token>` 带回 dashboard 的 `redirect_url`。
 4. dashboard 服务端使用 CAS token 调用 `ms-user-center /api/v1/admin/cas/admin` 查询管理员信息。
-5. 查询成功后，dashboard 本地签发管理端 JWT，后续请求继续使用本地 `Authorization: Bearer <jwt>`。
+5. 查询成功后，dashboard 按用户中心 `account` 同步到本地 `t_admin.name`。
+6. dashboard 使用本地 `t_admin.id` 签发管理端 JWT，后续请求继续使用本地 `Authorization: Bearer <jwt>`。
 
 核心约束：
 
 - PostgreSQL 是后台管理事实源。
+- SSO 只负责认证入口；管理员身份、禁用状态和 token 失效判断统一以 `t_admin` 为事实源。
 - dashboard 授权接口是在线服务唯一授权入口。
 - 在线服务不读 `t_app`，不读 Redis 授权投影，不读本地授权文件。
 - dashboard 授权 API 自身不做降级；在线服务在授权服务异常时只能按各自文档化的本地成功授权缓存策略处理。
@@ -238,6 +240,7 @@ recommend_debug:
 - 管理员初始账号通过 SQL seed 写入数据库，不在配置文件中放明文密码。
 - `sso.enabled=true` 时，dashboard 登录页显示“单点登录”按钮；本地账号密码登录仍保留。
 - `sso.app_secret` 只允许保存在服务端配置中，不得下发到浏览器。
+- SSO 登录成功会同步 `t_admin`；如果同名管理员已被禁用，登录后不会绕过本地禁用状态。
 - dashboard 使用 Redis 同步应用授权；推荐 Debug 从授权投影读取 Secret 后调用 `ms-rec-online`。
 - `recommend_debug.online_base_url` 指向推荐在线服务，默认匹配 `services-deploy/search-rec-ad` 的本地端口。
 
@@ -258,6 +261,7 @@ recommend_debug:
 规则：
 
 - 响应中不返回 `password`。
+- SSO 登录按用户中心 `account` 对应 `name` 创建或更新本地管理员，`disabled` 仍由本地库控制。
 - 首期不提供管理员增删改 UI；管理员通过初始化脚本创建。
 - 禁用管理员可通过数据库运维处理，禁用后登录失败。
 

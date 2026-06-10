@@ -15,7 +15,47 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/auth"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 )
+
+type fakeSSOAdminRepository struct {
+	adminsByID   map[int64]domain.Admin
+	adminsByName map[string]domain.Admin
+	nextID       int64
+}
+
+func newFakeSSOAdminRepository() *fakeSSOAdminRepository {
+	return &fakeSSOAdminRepository{
+		adminsByID:   make(map[int64]domain.Admin),
+		adminsByName: make(map[string]domain.Admin),
+		nextID:       1001,
+	}
+}
+
+func (r *fakeSSOAdminRepository) SyncSSOAdmin(_ context.Context, admin domain.Admin) (domain.Admin, error) {
+	if existing, ok := r.adminsByName[admin.Name]; ok {
+		existing.Nickname = admin.Nickname
+		existing.LastUpdateTime = time.Now().UTC()
+		r.adminsByName[existing.Name] = existing
+		r.adminsByID[existing.ID] = existing
+		return existing, nil
+	}
+	admin.ID = r.nextID
+	r.nextID++
+	admin.CreateTime = time.Now().UTC()
+	admin.LastUpdateTime = admin.CreateTime
+	r.adminsByName[admin.Name] = admin
+	r.adminsByID[admin.ID] = admin
+	return admin, nil
+}
+
+func (r *fakeSSOAdminRepository) GetAdminByName(_ context.Context, name string) (domain.Admin, error) {
+	return r.adminsByName[name], nil
+}
+
+func (r *fakeSSOAdminRepository) GetAdminByID(_ context.Context, id int64) (domain.Admin, error) {
+	return r.adminsByID[id], nil
+}
 
 func TestAdminSSOServiceStatusBuildsLoginURL(t *testing.T) {
 	service := NewAdminSSOService(config.SSOConfig{
@@ -26,7 +66,7 @@ func TestAdminSSOServiceStatusBuildsLoginURL(t *testing.T) {
 		AppSecret:      "secret-1",
 		RedirectURL:    "https://sar.example.com/sar-admin",
 		RequestTimeout: time.Second,
-	}, auth.NewService(config.AuthConfig{JWTSecret: "test-secret", Issuer: "ms-sar-dashboard"}), audit.NewService(nil), log.New(io.Discard, "", 0))
+	}, nil, auth.NewService(config.AuthConfig{JWTSecret: "test-secret", Issuer: "ms-sar-dashboard"}), audit.NewService(nil), log.New(io.Discard, "", 0))
 
 	status, err := service.Status(context.Background())
 	if err != nil {
@@ -75,6 +115,7 @@ func TestAdminSSOServiceLoginIssuesLocalAccessToken(t *testing.T) {
 	defer upstream.Close()
 
 	tokenService := auth.NewService(config.AuthConfig{JWTSecret: "test-secret", Issuer: "ms-sar-dashboard"})
+	repo := newFakeSSOAdminRepository()
 	sso := NewAdminSSOService(config.SSOConfig{
 		Enabled:        true,
 		AdminUIURL:     upstream.URL + "/uc-admin",
@@ -83,8 +124,8 @@ func TestAdminSSOServiceLoginIssuesLocalAccessToken(t *testing.T) {
 		AppSecret:      "secret-1",
 		RedirectURL:    "http://127.0.0.1:8081/sar-admin",
 		RequestTimeout: time.Second,
-	}, tokenService, audit.NewService(nil), log.New(io.Discard, "", 0))
-	authService := NewAdminAuthService(nil, tokenService, audit.NewService(nil), log.New(io.Discard, "", 0))
+	}, repo, tokenService, audit.NewService(nil), log.New(io.Discard, "", 0))
+	authService := &AdminAuthService{repo: repo, tokens: tokenService, audit: audit.NewService(nil), logger: log.New(io.Discard, "", 0)}
 
 	result, err := sso.Login(context.Background(), AdminSSOLoginInput{Token: "cas-token-1"})
 	if err != nil {
@@ -98,7 +139,7 @@ func TestAdminSSOServiceLoginIssuesLocalAccessToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate sso access token: %v", err)
 	}
-	if admin.ID != 8 || admin.Name != "root" || admin.Nickname != "管理员" {
+	if admin.ID != 1001 || admin.Name != "root" || admin.Nickname != "管理员" {
 		t.Fatalf("unexpected admin: %#v", admin)
 	}
 }
@@ -119,9 +160,47 @@ func TestAdminSSOServiceLoginRejectsInvalidCASToken(t *testing.T) {
 		AppSecret:      "secret-1",
 		RedirectURL:    "http://127.0.0.1:8081/sar-admin",
 		RequestTimeout: time.Second,
-	}, auth.NewService(config.AuthConfig{JWTSecret: "test-secret", Issuer: "ms-sar-dashboard"}), audit.NewService(nil), log.New(io.Discard, "", 0))
+	}, newFakeSSOAdminRepository(), auth.NewService(config.AuthConfig{JWTSecret: "test-secret", Issuer: "ms-sar-dashboard"}), audit.NewService(nil), log.New(io.Discard, "", 0))
 
 	if _, err := sso.Login(context.Background(), AdminSSOLoginInput{Token: "bad-token"}); err == nil || !strings.Contains(err.Error(), "invalid sso token") {
 		t.Fatalf("expected invalid sso token, got %v", err)
+	}
+}
+
+func TestAdminSSOServiceLoginRejectsDisabledLocalAdmin(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":200,"message":"success","data":{"admin_id":8,"account":"root","nickname":"管理员","permissions":["APP"]},"request_id":"0000000000000001"}`))
+	}))
+	defer upstream.Close()
+
+	repo := newFakeSSOAdminRepository()
+	now := time.Now().UTC()
+	repo.adminsByName["root"] = domain.Admin{
+		ID:             1001,
+		Name:           "root",
+		Nickname:       "旧昵称",
+		Disabled:       true,
+		CreateTime:     now,
+		LastUpdateTime: now,
+	}
+	repo.adminsByID[1001] = repo.adminsByName["root"]
+
+	sso := NewAdminSSOService(config.SSOConfig{
+		Enabled:        true,
+		AdminUIURL:     upstream.URL + "/uc-admin",
+		APIBaseURL:     upstream.URL,
+		AppID:          "100001",
+		AppSecret:      "secret-1",
+		RedirectURL:    "http://127.0.0.1:8081/sar-admin",
+		RequestTimeout: time.Second,
+	}, repo, auth.NewService(config.AuthConfig{JWTSecret: "test-secret", Issuer: "ms-sar-dashboard"}), audit.NewService(nil), log.New(io.Discard, "", 0))
+
+	_, err := sso.Login(context.Background(), AdminSSOLoginInput{Token: "cas-token-1"})
+	if err == nil || !strings.Contains(err.Error(), "invalid admin credentials") {
+		t.Fatalf("expected disabled local admin rejection, got %v", err)
+	}
+	if !repo.adminsByName["root"].Disabled {
+		t.Fatal("expected local disabled flag to remain true")
 	}
 }

@@ -43,7 +43,7 @@ func NewContainer(cfg config.Config, dbClient *database.Client, cacheClient *pla
 		Repo:  repo,
 		Audit: auditService,
 		Auth:  NewAdminAuthService(repo, tokenService, auditService, logger),
-		SSO:   NewAdminSSOService(cfg.SSO, tokenService, auditService, logger),
+		SSO:   NewAdminSSOService(cfg.SSO, repo, tokenService, auditService, logger),
 		Apps:  NewAppService(repo, redisClient, auditService, logger),
 		Logs:  NewLogService(repo),
 		Debug: NewDebugService(cfg, redisClient, esClient, auditService, logger),

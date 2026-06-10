@@ -15,10 +15,15 @@ import (
 )
 
 type AdminAuthService struct {
-	repo   *repository.Repository
+	repo   adminAuthRepository
 	tokens *auth.Service
 	audit  *audit.Service
 	logger *log.Logger
+}
+
+type adminAuthRepository interface {
+	GetAdminByName(ctx context.Context, name string) (domain.Admin, error)
+	GetAdminByID(ctx context.Context, id int64) (domain.Admin, error)
 }
 
 func NewAdminAuthService(repo *repository.Repository, tokens *auth.Service, auditSvc *audit.Service, logger *log.Logger) *AdminAuthService {
@@ -95,14 +100,6 @@ func (s *AdminAuthService) AuthenticateAccessToken(ctx context.Context, token st
 	claims, err := s.tokens.ParseAccessToken(token)
 	if err != nil {
 		return domain.Admin{}, apperror.Unauthorized("invalid access token", err)
-	}
-	if strings.EqualFold(strings.TrimSpace(claims.AuthSource), "sso") {
-		return domain.Admin{
-			ID:       claims.AdminID,
-			Name:     strings.TrimSpace(claims.Subject),
-			Nickname: strings.TrimSpace(claims.AdminNickname),
-			Disabled: false,
-		}, nil
 	}
 	admin, err := s.repo.GetAdminByID(ctx, claims.AdminID)
 	if err != nil {

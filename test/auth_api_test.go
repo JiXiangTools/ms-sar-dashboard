@@ -17,6 +17,7 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/auth"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/router"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/service"
 )
@@ -26,6 +27,16 @@ type fakeAuthRedis struct {
 	values       map[string]string
 	stringValues map[string]string
 	err          error
+}
+
+type fakeSSOAdminRepo struct{}
+
+func (r *fakeSSOAdminRepo) SyncSSOAdmin(_ context.Context, admin domain.Admin) (domain.Admin, error) {
+	admin.ID = 8
+	admin.Disabled = false
+	admin.CreateTime = time.Now().UTC()
+	admin.LastUpdateTime = admin.CreateTime
+	return admin, nil
 }
 
 func (r *fakeAuthRedis) HGetAll(_ context.Context, _ string) *redis.MapStringStringCmd {
@@ -249,7 +260,7 @@ func newSSOAPITestRouter(t *testing.T, statusCode int, body string) http.Handler
 		AppSecret:      "secret-1",
 		RedirectURL:    "http://127.0.0.1:18081/sar-admin",
 		RequestTimeout: time.Second,
-	}, tokenService, audit.NewService(nil), log.New(io.Discard, "", 0))
+	}, &fakeSSOAdminRepo{}, tokenService, audit.NewService(nil), log.New(io.Discard, "", 0))
 
 	return router.New(config.Config{
 		App: config.AppConfig{Env: "test"},

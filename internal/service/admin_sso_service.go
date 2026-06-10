@@ -19,25 +19,32 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/auth"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/requestid"
 )
 
 type AdminSSOService struct {
 	cfg        config.SSOConfig
+	repo       ssoAdminRepository
 	httpClient *http.Client
 	tokens     *auth.Service
 	audit      *audit.Service
 	logger     *log.Logger
 }
 
-func NewAdminSSOService(cfg config.SSOConfig, tokens *auth.Service, auditSvc *audit.Service, logger *log.Logger) *AdminSSOService {
+type ssoAdminRepository interface {
+	SyncSSOAdmin(ctx context.Context, admin domain.Admin) (domain.Admin, error)
+}
+
+func NewAdminSSOService(cfg config.SSOConfig, repo ssoAdminRepository, tokens *auth.Service, auditSvc *audit.Service, logger *log.Logger) *AdminSSOService {
 	timeout := cfg.RequestTimeout
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
 	return &AdminSSOService{
 		cfg:        cfg,
+		repo:       repo,
 		httpClient: &http.Client{Timeout: timeout},
 		tokens:     tokens,
 		audit:      auditSvc,
@@ -76,7 +83,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 		return LoginOutput{}, apperror.Unauthorized("invalid sso token", nil)
 	}
 
-	admin, err := s.fetchCASAdmin(ctx, token)
+	casAdmin, err := s.fetchCASAdmin(ctx, token)
 	if err != nil {
 		_ = s.audit.Record(ctx, 0, "AUTH", "LOGIN_FAILED", map[string]any{
 			"source": "sso",
@@ -88,23 +95,41 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 		return LoginOutput{}, err
 	}
 
-	accessToken, err := s.tokens.IssueSSOAccessToken(admin.AdminID, admin.Account, admin.Nickname)
+	admin, err := s.syncLocalAdmin(ctx, casAdmin)
 	if err != nil {
-		_ = s.audit.Record(ctx, admin.AdminID, "AUTH", "LOGIN_FAILED", map[string]any{
+		_ = s.audit.Record(ctx, 0, "AUTH", "LOGIN_FAILED", map[string]any{
 			"source": "sso",
-			"name":   admin.Account,
+			"name":   casAdmin.Account,
+			"reason": "admin_sync_failed",
+		})
+		return LoginOutput{}, apperror.Internal("sync sso admin failed", err)
+	}
+	if admin.Disabled {
+		_ = s.audit.Record(ctx, admin.ID, "AUTH", "LOGIN_FAILED", map[string]any{
+			"source": "sso",
+			"name":   admin.Name,
+			"reason": "disabled",
+		})
+		return LoginOutput{}, apperror.Unauthorized("invalid admin credentials", nil)
+	}
+
+	accessToken, err := s.tokens.IssueAccessToken(admin)
+	if err != nil {
+		_ = s.audit.Record(ctx, admin.ID, "AUTH", "LOGIN_FAILED", map[string]any{
+			"source": "sso",
+			"name":   admin.Name,
 			"reason": "token_issue_failed",
 		})
 		return LoginOutput{}, apperror.Internal("internal server error", err)
 	}
 
-	_ = s.audit.Record(ctx, admin.AdminID, "AUTH", "LOGIN_SUCCESS", map[string]any{
+	_ = s.audit.Record(ctx, admin.ID, "AUTH", "LOGIN_SUCCESS", map[string]any{
 		"source": "sso",
-		"name":   admin.Account,
+		"name":   admin.Name,
 	})
 	logx.Info(s.logger, ctx, startedAt, "admin.sso.login.success", "admin sso login success",
-		logx.Int64("admin_id", admin.AdminID),
-		logx.String("name", admin.Account),
+		logx.Int64("admin_id", admin.ID),
+		logx.String("name", admin.Name),
 	)
 	return LoginOutput{
 		AccessToken: accessToken,
@@ -174,6 +199,16 @@ func (s *AdminSSOService) fetchCASAdmin(ctx context.Context, token string) (Admi
 		return AdminSSOAdmin{}, apperror.Internal("invalid sso response", errors.New("missing admin identity"))
 	}
 	return admin, nil
+}
+
+func (s *AdminSSOService) syncLocalAdmin(ctx context.Context, casAdmin AdminSSOAdmin) (domain.Admin, error) {
+	if s == nil || s.repo == nil {
+		return domain.Admin{}, errors.New("admin repository is not configured")
+	}
+	return s.repo.SyncSSOAdmin(ctx, domain.Admin{
+		Name:     casAdmin.Account,
+		Nickname: casAdmin.Nickname,
+	})
 }
 
 func (s *AdminSSOService) loginURL() (string, error) {
