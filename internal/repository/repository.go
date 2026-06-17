@@ -127,6 +127,9 @@ func (r *Repository) SyncSSOAdmin(ctx context.Context, admin domain.Admin) (doma
 			if err := tx.Save(&model).Error; err != nil {
 				return mapSQLError(err)
 			}
+			if err := tx.Where("id = ?", model.ID).First(&model).Error; err != nil {
+				return mapSQLError(err)
+			}
 			synced = toAdmin(model)
 			return nil
 		case errors.Is(mapSQLError(err), ErrNotFound):
@@ -139,6 +142,9 @@ func (r *Repository) SyncSSOAdmin(ctx context.Context, admin domain.Admin) (doma
 				LastUpdateTime: now,
 			}
 			if err := tx.Create(&model).Error; err != nil {
+				return mapSQLError(err)
+			}
+			if err := tx.Where("id = ?", model.ID).First(&model).Error; err != nil {
 				return mapSQLError(err)
 			}
 			synced = toAdmin(model)
