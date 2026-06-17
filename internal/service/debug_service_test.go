@@ -12,9 +12,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/apperror"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/elasticsearch"
 )
+
+type fakeDebugRedis struct {
+	redis.UniversalClient
+	values map[string]string
+	err    error
+}
+
+func (r *fakeDebugRedis) HGetAll(_ context.Context, _ string) *redis.MapStringStringCmd {
+	return redis.NewMapStringStringResult(r.values, r.err)
+}
 
 func TestBuildRecommendDebugRequestUsesOnlineEndpoints(t *testing.T) {
 	endpoint, params, query, err := buildRecommendDebugRequest(RecDebugRequest{
@@ -114,6 +127,26 @@ func TestRecommendDebugRejectsNonCanonicalAppID(t *testing.T) {
 
 	if _, err := service.recommendAppSecret(context.Background(), "0100001"); err == nil {
 		t.Fatal("expected leading-zero appid to be rejected")
+	}
+}
+
+func TestRecommendDebugMissingAppAuthorizationIsBadRequest(t *testing.T) {
+	service := NewDebugService(config.Config{
+		RecommendDebug: config.RecommendDebugConfig{
+			DebugEnabled:      true,
+			OnlineBaseURL:     "http://127.0.0.1:1",
+			MaxCandidateLimit: 20,
+			RequestTimeout:    time.Second,
+		},
+	}, &fakeDebugRedis{}, nil, nil, log.New(io.Discard, "", 0))
+
+	_, err := service.recommendAppSecret(context.Background(), "100001")
+	if err == nil {
+		t.Fatal("expected missing app authorization to fail")
+	}
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.HTTPStatus != http.StatusBadRequest || appErr.Message != "app authorization not found" {
+		t.Fatalf("unexpected error: %#v", err)
 	}
 }
 

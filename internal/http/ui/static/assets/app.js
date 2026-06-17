@@ -279,7 +279,7 @@ async function requestAdminData(path, options = {}) {
     throw new Error("连接服务失败，请确认 sar-admin 服务已启动，并刷新页面后重试。");
   }
   const payload = await response.json().catch(() => null);
-  if (response.status === 401) {
+  if (response.status === 401 && payload?.message === "invalid access token") {
     clearSession();
     renderWorkspace();
   }

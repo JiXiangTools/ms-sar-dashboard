@@ -101,6 +101,7 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 		`/api/v1/admin/debug/es/raw`,
 		`/api/v1/admin/debug/rec`,
 		`连接服务失败，请确认 sar-admin 服务已启动，并刷新页面后重试。`,
+		`response.status === 401 && payload?.message === "invalid access token"`,
 		`readSSOToken`,
 		`单点登录`,
 	}
@@ -116,6 +117,10 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 		if strings.Contains(body, value) {
 			t.Fatalf("expected app script to remove redis key debug option %q", value)
 		}
+	}
+	if strings.Contains(body, `if (response.status === 401) {
+    clearSession();`) {
+		t.Fatalf("expected app script not to clear session for every 401 response")
 	}
 
 	recorder = httptest.NewRecorder()

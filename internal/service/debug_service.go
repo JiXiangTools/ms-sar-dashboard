@@ -369,14 +369,14 @@ func (s *DebugService) recommendAppSecret(ctx context.Context, rawAppID string) 
 		return "", apperror.Internal("read app authorization failed", err)
 	}
 	if len(values) == 0 {
-		return "", apperror.Unauthorized("app authorization not found", nil)
+		return "", apperror.BadRequest("app authorization not found", nil)
 	}
 	if strings.EqualFold(strings.TrimSpace(values["disabled"]), "true") || strings.TrimSpace(values["disabled"]) == "1" {
-		return "", apperror.Unauthorized("app authorization disabled", nil)
+		return "", apperror.BadRequest("app authorization disabled", nil)
 	}
 	secret := strings.TrimSpace(values["secret"])
 	if secret == "" {
-		return "", apperror.Unauthorized("app authorization secret is empty", nil)
+		return "", apperror.BadRequest("app authorization secret is empty", nil)
 	}
 	return secret, nil
 }
