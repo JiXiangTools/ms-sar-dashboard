@@ -10,7 +10,7 @@ func TestStartDebugScriptBootstrapsServicesDeploy(t *testing.T) {
 	helper := readRepoFile(t, "admin", "services-deploy-env.sh")
 
 	required := []string{
-		"/Users/kely/Desktop/code/services-deploy",
+		`SERVICES_DEPLOY_DIR="${MSSAR_SERVICES_DEPLOY_DIR}"`,
 		"init-local-pg.sh",
 		"services-deploy-postgres",
 		"services-deploy-redis",
