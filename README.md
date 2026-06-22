@@ -100,7 +100,7 @@ RESET_DATABASE=true ./admin/init-local-pg.sh
 
 应用默认为空，首次需要在 `sar-admin` 里手动新增。新增或修改应用时，Secret 会生成一串随机密文，并在提交后只展示一次，便于复制保存。
 
-脚本默认使用仓库相邻目录 `../services-deploy`；如果你的 `services-deploy` 在别的位置，可以通过 `MSSAR_SERVICES_DEPLOY_DIR` 覆盖。如果你想改成别的 PostgreSQL 实例，也可以通过环境变量覆盖：
+脚本需要通过 `MSSAR_SERVICES_DEPLOY_DIR` 显式指定本地 `services-deploy` 目录；如果你想改成别的 PostgreSQL 实例，也可以通过环境变量覆盖：
 
 ```bash
 MSSAR_SERVICES_DEPLOY_DIR='../services-deploy' \
