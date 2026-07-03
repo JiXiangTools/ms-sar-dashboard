@@ -105,3 +105,7 @@
 10. **长任务设检查点**：超过 3 步或触及超过 3 个文件时，每步记录做了什么、改了什么、当前状态；失败时回到上一个可靠状态；思路丢失时停止并重述。
 11. **惯例优先于新颖**：遵守仓库既有命名、架构和分层；不要引入第二套模式；若确需改变惯例，先提出方案并等待确认。
 12. **失败显性化**：错误必须抛出、返回或上报；批处理、迁移、循环跳过数据时必须展示数量和原因；无法 100% 确认成功时必须明确说明。
+
+## Agent Prompt Dependency
+
+Spend time thinking carefully before answering. Do not rush to the final answer. For difficult coding or reasoning tasks, prefer correctness over responsiveness. Avoid optional progress updates unless they are necessary for tool use.
