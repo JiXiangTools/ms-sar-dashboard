@@ -37,29 +37,23 @@ func NewDebugService(cfg config.Config, redisClient redis.UniversalClient, esCli
 
 func (s *DebugService) IndexInfo(ctx context.Context, adminID int64, appID int64) (map[string]any, error) {
 	startedAt := time.Now()
-	if !s.cfg.Elasticsearch.DebugEnabled {
-		return nil, apperror.Forbidden("es debug disabled", nil)
-	}
-	if s.es == nil {
-		return nil, apperror.Internal("elasticsearch client is not configured", nil)
+	if err := s.ensureESDebugEnabled(); err != nil {
+		return nil, err
 	}
 	index := s.esIndexName(appID)
 	value, err := s.es.IndexInfo(ctx, index)
 	if err != nil {
-		_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "INDEX_VIEW", map[string]any{
-			"appid":   appID,
-			"index":   index,
-			"success": false,
-			"error":   err.Error(),
+		s.recordDebugAudit(ctx, adminID, "ES_DEBUG", "INDEX_VIEW", err, map[string]any{
+			"appid": appID,
+			"index": index,
 		})
 		return nil, apperror.Internal("es debug failed", err)
 	}
-	_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "INDEX_VIEW", map[string]any{
-		"appid":   appID,
-		"index":   index,
-		"success": true,
+	s.recordDebugAudit(ctx, adminID, "ES_DEBUG", "INDEX_VIEW", nil, map[string]any{
+		"appid": appID,
+		"index": index,
 	})
-	logx.Info(s.logger, ctx, startedAt, "es_debug.index_view", "es index view",
+	s.logDebugInfo(ctx, startedAt, "es_debug.index_view", "es index view",
 		logx.Int64("admin_id", adminID),
 		logx.Int64("app_id", appID),
 		logx.String("index", index),
@@ -69,31 +63,25 @@ func (s *DebugService) IndexInfo(ctx context.Context, adminID int64, appID int64
 
 func (s *DebugService) Document(ctx context.Context, adminID int64, appID int64, itemID string) (map[string]any, error) {
 	startedAt := time.Now()
-	if !s.cfg.Elasticsearch.DebugEnabled {
-		return nil, apperror.Forbidden("es debug disabled", nil)
-	}
-	if s.es == nil {
-		return nil, apperror.Internal("elasticsearch client is not configured", nil)
+	if err := s.ensureESDebugEnabled(); err != nil {
+		return nil, err
 	}
 	index := s.esIndexName(appID)
 	value, err := s.es.Document(ctx, index, strings.TrimSpace(itemID))
 	if err != nil {
-		_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "DOC_VIEW", map[string]any{
+		s.recordDebugAudit(ctx, adminID, "ES_DEBUG", "DOC_VIEW", err, map[string]any{
 			"appid":   appID,
 			"index":   index,
 			"item_id": itemID,
-			"success": false,
-			"error":   err.Error(),
 		})
 		return nil, apperror.Internal("es debug failed", err)
 	}
-	_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "DOC_VIEW", map[string]any{
+	s.recordDebugAudit(ctx, adminID, "ES_DEBUG", "DOC_VIEW", nil, map[string]any{
 		"appid":   appID,
 		"index":   index,
 		"item_id": itemID,
-		"success": true,
 	})
-	logx.Info(s.logger, ctx, startedAt, "es_debug.doc_view", "es document view",
+	s.logDebugInfo(ctx, startedAt, "es_debug.doc_view", "es document view",
 		logx.Int64("admin_id", adminID),
 		logx.Int64("app_id", appID),
 		logx.String("index", index),
@@ -104,31 +92,25 @@ func (s *DebugService) Document(ctx context.Context, adminID int64, appID int64,
 
 func (s *DebugService) Search(ctx context.Context, adminID int64, appID int64, body []byte) (map[string]any, error) {
 	startedAt := time.Now()
-	if !s.cfg.Elasticsearch.DebugEnabled {
-		return nil, apperror.Forbidden("es debug disabled", nil)
-	}
-	if s.es == nil {
-		return nil, apperror.Internal("elasticsearch client is not configured", nil)
+	if err := s.ensureESDebugEnabled(); err != nil {
+		return nil, err
 	}
 	index := s.esIndexName(appID)
 	value, err := s.es.Search(ctx, index, body)
 	if err != nil {
-		_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "QUERY", map[string]any{
+		s.recordDebugAudit(ctx, adminID, "ES_DEBUG", "QUERY", err, map[string]any{
 			"appid":    appID,
 			"index":    index,
-			"success":  false,
-			"error":    err.Error(),
 			"body_len": len(body),
 		})
 		return nil, apperror.Internal("es debug failed", err)
 	}
-	_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "QUERY", map[string]any{
+	s.recordDebugAudit(ctx, adminID, "ES_DEBUG", "QUERY", nil, map[string]any{
 		"appid":    appID,
 		"index":    index,
-		"success":  true,
 		"body_len": len(body),
 	})
-	logx.Info(s.logger, ctx, startedAt, "es_debug.query", "es query",
+	s.logDebugInfo(ctx, startedAt, "es_debug.query", "es query",
 		logx.Int64("admin_id", adminID),
 		logx.Int64("app_id", appID),
 		logx.String("index", index),
@@ -139,11 +121,8 @@ func (s *DebugService) Search(ctx context.Context, adminID int64, appID int64, b
 
 func (s *DebugService) RawES(ctx context.Context, adminID int64, req ESRawRequest) (any, error) {
 	startedAt := time.Now()
-	if !s.cfg.Elasticsearch.DebugEnabled {
-		return nil, apperror.Forbidden("es debug disabled", nil)
-	}
-	if s.es == nil {
-		return nil, apperror.Internal("elasticsearch client is not configured", nil)
+	if err := s.ensureESDebugEnabled(); err != nil {
+		return nil, err
 	}
 	method, path, body, err := normalizeESRawRequest(req)
 	if err != nil {
@@ -155,21 +134,41 @@ func (s *DebugService) RawES(ctx context.Context, adminID int64, req ESRawReques
 		"method":   method,
 		"path":     path,
 		"body_len": len(body),
-		"success":  err == nil,
 	}
 	if err != nil {
-		auditContent["error"] = err.Error()
-		_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "RAW", auditContent)
+		s.recordDebugAudit(ctx, adminID, "ES_DEBUG", "RAW", err, auditContent)
 		return nil, apperror.Internal("es debug failed", err)
 	}
-	_ = s.audit.Record(ctx, adminID, "ES_DEBUG", "RAW", auditContent)
-	logx.Info(s.logger, ctx, startedAt, "es_debug.raw", "es raw request",
+	s.recordDebugAudit(ctx, adminID, "ES_DEBUG", "RAW", nil, auditContent)
+	s.logDebugInfo(ctx, startedAt, "es_debug.raw", "es raw request",
 		logx.Int64("admin_id", adminID),
 		logx.String("method", method),
 		logx.String("path", path),
 		logx.Int("body_len", len(body)),
 	)
 	return value, nil
+}
+
+func (s *DebugService) ensureESDebugEnabled() error {
+	if !s.cfg.Elasticsearch.DebugEnabled {
+		return apperror.Forbidden("es debug disabled", nil)
+	}
+	if s.es == nil {
+		return apperror.Internal("elasticsearch client is not configured", nil)
+	}
+	return nil
+}
+
+func (s *DebugService) recordDebugAudit(ctx context.Context, adminID int64, cate string, typ string, err error, content map[string]any) {
+	content["success"] = err == nil
+	if err != nil {
+		content["error"] = err.Error()
+	}
+	_ = s.audit.Record(ctx, adminID, cate, typ, content)
+}
+
+func (s *DebugService) logDebugInfo(ctx context.Context, startedAt time.Time, event string, message string, fields ...logx.Field) {
+	logx.Info(s.logger, ctx, startedAt, event, message, fields...)
 }
 
 func normalizeESRawRequest(req ESRawRequest) (string, string, []byte, error) {

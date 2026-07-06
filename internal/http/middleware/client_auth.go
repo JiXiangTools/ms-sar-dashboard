@@ -18,15 +18,19 @@ func ClientAuth(appService *service.AppService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		app, err := appService.Authorize(c.Request.Context(), c.GetHeader(HeaderAppID), c.GetHeader(HeaderSecret))
 		if err != nil {
-			response.Error(c, http.StatusUnauthorized, "invalid app authorization", nil)
-			response.SetErrorLogDetails(c, map[string]any{
-				"auth_reason": service.AppAuthFailureReason(err),
-				"auth_appid":  c.GetHeader(HeaderAppID),
-			})
+			WriteAppAuthError(c, c.GetHeader(HeaderAppID), service.AppAuthFailureReason(err))
 			c.Abort()
 			return
 		}
 		c.Set(ContextKeyAppID, app.ID)
 		c.Next()
 	}
+}
+
+func WriteAppAuthError(c *gin.Context, appID any, reason string) {
+	response.Error(c, http.StatusUnauthorized, "invalid app authorization", nil)
+	response.SetErrorLogDetails(c, map[string]any{
+		"auth_reason": reason,
+		"auth_appid":  appID,
+	})
 }

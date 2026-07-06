@@ -147,11 +147,7 @@ func (h *AdminHandler) AppAuthorize(c *gin.Context) {
 		return
 	}
 	if req.AppID <= 0 || strings.TrimSpace(req.Secret) == "" {
-		response.Error(c, http.StatusUnauthorized, "invalid app authorization", nil)
-		response.SetErrorLogDetails(c, map[string]any{
-			"auth_reason": "appid_or_secret_required",
-			"auth_appid":  req.AppID,
-		})
+		middleware.WriteAppAuthError(c, req.AppID, "appid_or_secret_required")
 		return
 	}
 	if h.apps == nil {
@@ -159,11 +155,7 @@ func (h *AdminHandler) AppAuthorize(c *gin.Context) {
 		return
 	}
 	if _, err := h.apps.Authorize(c.Request.Context(), strconv.FormatInt(req.AppID, 10), req.Secret); err != nil {
-		response.Error(c, http.StatusUnauthorized, "invalid app authorization", nil)
-		response.SetErrorLogDetails(c, map[string]any{
-			"auth_reason": service.AppAuthFailureReason(err),
-			"auth_appid":  req.AppID,
-		})
+		middleware.WriteAppAuthError(c, req.AppID, service.AppAuthFailureReason(err))
 		return
 	}
 	response.Success(c, nil)

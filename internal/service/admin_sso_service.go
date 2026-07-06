@@ -76,7 +76,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 	}
 	token := strings.TrimSpace(input.Token)
 	if token == "" {
-		_ = s.audit.Record(ctx, 0, "AUTH", "LOGIN_FAILED", map[string]any{
+		recordLoginFailed(ctx, s.audit, 0, map[string]any{
 			"source": "sso",
 			"reason": "token_required",
 		})
@@ -85,7 +85,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 
 	casAdmin, err := s.fetchCASAdmin(ctx, token)
 	if err != nil {
-		_ = s.audit.Record(ctx, 0, "AUTH", "LOGIN_FAILED", map[string]any{
+		recordLoginFailed(ctx, s.audit, 0, map[string]any{
 			"source": "sso",
 			"reason": "invalid_token",
 		})
@@ -97,7 +97,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 
 	admin, err := s.syncLocalAdmin(ctx, casAdmin)
 	if err != nil {
-		_ = s.audit.Record(ctx, 0, "AUTH", "LOGIN_FAILED", map[string]any{
+		recordLoginFailed(ctx, s.audit, 0, map[string]any{
 			"source": "sso",
 			"name":   casAdmin.Account,
 			"reason": "admin_sync_failed",
@@ -105,7 +105,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 		return LoginOutput{}, apperror.Internal("sync sso admin failed", err)
 	}
 	if admin.Disabled {
-		_ = s.audit.Record(ctx, admin.ID, "AUTH", "LOGIN_FAILED", map[string]any{
+		recordLoginFailed(ctx, s.audit, admin.ID, map[string]any{
 			"source": "sso",
 			"name":   admin.Name,
 			"reason": "disabled",
@@ -113,9 +113,9 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 		return LoginOutput{}, apperror.Unauthorized("invalid admin credentials", nil)
 	}
 
-	accessToken, err := s.tokens.IssueAccessToken(admin)
+	output, err := issueLoginOutput(s.tokens, admin)
 	if err != nil {
-		_ = s.audit.Record(ctx, admin.ID, "AUTH", "LOGIN_FAILED", map[string]any{
+		recordLoginFailed(ctx, s.audit, admin.ID, map[string]any{
 			"source": "sso",
 			"name":   admin.Name,
 			"reason": "token_issue_failed",
@@ -123,7 +123,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 		return LoginOutput{}, apperror.Internal("internal server error", err)
 	}
 
-	_ = s.audit.Record(ctx, admin.ID, "AUTH", "LOGIN_SUCCESS", map[string]any{
+	recordLoginSuccess(ctx, s.audit, admin.ID, map[string]any{
 		"source": "sso",
 		"name":   admin.Name,
 	})
@@ -131,11 +131,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 		logx.Int64("admin_id", admin.ID),
 		logx.String("name", admin.Name),
 	)
-	return LoginOutput{
-		AccessToken: accessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   int64(s.tokens.AccessTokenTTL().Seconds()),
-	}, nil
+	return output, nil
 }
 
 func (s *AdminSSOService) fetchCASAdmin(ctx context.Context, token string) (AdminSSOAdmin, error) {
