@@ -30,6 +30,13 @@
 - 写操作影响授权缓存时，必须同步更新或删除 dashboard 内部 Redis 授权投影 `app_auth_{appid}`。
 - 响应中不得返回管理员密码。
 - 日志和审计中不得记录 password、secret、token 明文。
+- Prometheus label 只能使用固定路由模板、状态、method 或固定 operation/outcome；禁止 appid、admin id、request id、原始 path/query 和认证材料。
+- 新增或修改 Gin 路由时必须同步 `internal/metrics` 的 route template allowlist；未知模板统一聚合为 `unmatched`，不得改为透传字符串。
+- Compose 中 dashboard 与 database-migrate 必须引用同一个 `MS_SAR_DASHBOARD_IMAGE` anchor；构建脚本只更新 Git ignored 的 `.compose-image.env`，不得改写 tracked `docker-compose.yml`。
+- 所有新增 handler 必须处于全局请求体限制之后；不得绕过 `security.max_request_body_bytes` 单独无界读取 body。
+- 客户端 IP 必须使用 `middleware.ClientIP` 的 canonical 结果；不得直接信任 `X-Forwarded-For`，新增代理只能通过 `security.trusted_proxy_cidrs` 显式配置。
+- online 服务会把其已校验的终端 client IP 作为单值 `X-Forwarded-For` 转发到 app-auth；生产配置必须把可信 CIDR 收窄到实际 online Pod/实例网段。
+- 安全限流默认使用共享 Redis 原子 store，并保留有界本机影子窗口；Redis 故障不得变成无限放行或全站 `5xx`。限流 key 不得包含账号、密码、token、secret 等明文。
 
 ## 3. 修改文档同步要求
 
@@ -46,8 +53,10 @@
 
 修改数据库结构时必须同步：
 
-- `upgrade/sql/schema.sql`
-- `upgrade/sql/data.sql`
+- 在 `upgrade/sql/migrations/` 追加更高版本 SQL；禁止修改已发布迁移
+- `upgrade/sql/schema.sql`（仅在兼容引导需要覆盖新版本时同步）
+- `upgrade/sql/data.sql`（仅初始管理员 seed 契约变化时同步）
+- `internal/platform/database/migrations.go` 的迁移契约测试
 - [design.md](./design.md)
 - repository 测试
 
@@ -77,6 +86,10 @@
 - data-receiver 客户端上报授权成功和失败。
 - rec-online 推荐接口统一 Header 授权成功和失败。
 - search-online 搜索接口统一 Header 授权成功和失败。
+- `/metrics` 无鉴权可抓取，动态路由值和 query 不出现在指标文本中。
+- 请求体已知长度和 chunked 超限都在 handler 前返回 `413`。
+- 未可信代理伪造 `X-Forwarded-For` 无法改变客户端 IP 或绕过限流。
+- 两个路由/服务实例共享 Redis 限流计数；Redis 故障时本机影子窗口仍阻止超额请求且不影响其他身份。
 
 如果暂时无法补测试，交付说明必须明确测试缺口和风险。
 

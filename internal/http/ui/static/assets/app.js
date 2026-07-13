@@ -199,14 +199,6 @@ function formatTime(value) {
   return matched ? `${matched[1]} ${matched[2]}` : raw;
 }
 
-function maskSecret(value) {
-  const raw = String(value || "");
-  if (raw.length <= 10) {
-    return raw || "--";
-  }
-  return `${raw.slice(0, 6)}******${raw.slice(-4)}`;
-}
-
 function generateAppSecret() {
   const bytes = new Uint8Array(24);
   window.crypto.getRandomValues(bytes);
@@ -365,10 +357,11 @@ async function startSSOLogin() {
 }
 
 async function completeSSOLogin(token) {
-  const casToken = String(token || "").trim();
-  if (!casToken) {
-    return false;
-  }
+	const casToken = String(token || "").trim();
+	if (!casToken) {
+		return false;
+	}
+	clearSSOToken();
 
   clearSession();
   state.sso.processing = true;
@@ -389,14 +382,12 @@ async function completeSSOLogin(token) {
     state.sso.processing = false;
     state.loginOpen = false;
     persistSession();
-    clearSSOToken();
-    setFeedback("单点登录成功。");
+		setFeedback("单点登录成功。");
     renderWorkspace();
     await loadActiveView(true);
     return true;
   } catch (error) {
-    clearSSOToken();
-    clearSession();
+		clearSession();
     state.sso.processing = false;
     state.loginError = error instanceof Error ? error.message : "单点登录失败";
     setFeedback("", "error");
@@ -697,7 +688,7 @@ function renderAppsTable() {
   const data = state.data.apps;
   const items = data?.items || [];
   if (!items.length) {
-    panelContent.innerHTML = renderEmptyState("暂无授权应用", "新增应用后会在这里展示 appid、secret 与更新时间。");
+    panelContent.innerHTML = renderEmptyState("暂无授权应用", "新增应用后会在这里展示 appid 与更新时间。");
     renderPagination(data);
     return;
   }
@@ -708,7 +699,7 @@ function renderAppsTable() {
           <tr>
             <th>ID</th>
             <th>名称</th>
-            <th>Secret</th>
+			<th>密钥状态</th>
             <th>备注</th>
             <th>创建时间</th>
             <th>更新时间</th>
@@ -722,7 +713,7 @@ function renderAppsTable() {
                 <tr>
                   <td>${escapeHTML(item.id)}</td>
                   <td>${escapeHTML(item.name)}</td>
-                  <td class="secret" title="${escapeHTML(item.secret || "")}">${escapeHTML(maskSecret(item.secret))}</td>
+				  <td>${item.secret_configured ? "已设置" : "未设置"}</td>
                   <td>${escapeHTML(item.remark || "--")}</td>
                   <td>${escapeHTML(formatTime(item.create_time))}</td>
                   <td>${escapeHTML(formatTime(item.last_update_time))}</td>
@@ -955,11 +946,10 @@ function openAppForm(mode, appID = 0) {
   state.appForm = {
     mode,
     id: appID,
-    originalSecret: item?.secret || "",
     draft: {
       name: item?.name || "",
       remark: item?.remark || "",
-      secret: mode === "create" ? generateAppSecret() : item?.secret || ""
+	  secret: ""
     }
   };
   state.appFormError = "";
@@ -975,8 +965,7 @@ async function submitAppForm(form) {
     remark: String(values.remark || "").trim()
   };
   const secret = String(values.secret || "").trim();
-  const originalSecret = String(state.appForm?.originalSecret || "").trim();
-  const secretChanged = isEdit && secret !== "" && secret !== originalSecret;
+	const secretChanged = isEdit && secret !== "";
   if (!isEdit || secretChanged) {
     payload.secret = secret;
   }

@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
+# Compatibility path for PostgreSQL's empty-volume initdb hook. Normal
+# deployments use the one-shot ms-sar-dbtool service so existing volumes also
+# receive pending migrations.
 ADMIN_NAME="${MSSAR_INIT_ADMIN_NAME:?MSSAR_INIT_ADMIN_NAME is required}"
 ADMIN_PASSWORD_HASH="${MSSAR_INIT_ADMIN_PASSWORD_HASH:?MSSAR_INIT_ADMIN_PASSWORD_HASH is required}"
 

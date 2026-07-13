@@ -76,7 +76,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 	}
 	token := strings.TrimSpace(input.Token)
 	if token == "" {
-		recordLoginFailed(ctx, s.audit, 0, map[string]any{
+		recordLoginFailed(ctx, s.audit, s.logger, 0, map[string]any{
 			"source": "sso",
 			"reason": "token_required",
 		})
@@ -85,7 +85,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 
 	casAdmin, err := s.fetchCASAdmin(ctx, token)
 	if err != nil {
-		recordLoginFailed(ctx, s.audit, 0, map[string]any{
+		recordLoginFailed(ctx, s.audit, s.logger, 0, map[string]any{
 			"source": "sso",
 			"reason": "invalid_token",
 		})
@@ -97,7 +97,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 
 	admin, err := s.syncLocalAdmin(ctx, casAdmin)
 	if err != nil {
-		recordLoginFailed(ctx, s.audit, 0, map[string]any{
+		recordLoginFailed(ctx, s.audit, s.logger, 0, map[string]any{
 			"source": "sso",
 			"name":   casAdmin.Account,
 			"reason": "admin_sync_failed",
@@ -105,7 +105,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 		return LoginOutput{}, apperror.Internal("sync sso admin failed", err)
 	}
 	if admin.Disabled {
-		recordLoginFailed(ctx, s.audit, admin.ID, map[string]any{
+		recordLoginFailed(ctx, s.audit, s.logger, admin.ID, map[string]any{
 			"source": "sso",
 			"name":   admin.Name,
 			"reason": "disabled",
@@ -115,7 +115,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 
 	output, err := issueLoginOutput(s.tokens, admin)
 	if err != nil {
-		recordLoginFailed(ctx, s.audit, admin.ID, map[string]any{
+		recordLoginFailed(ctx, s.audit, s.logger, admin.ID, map[string]any{
 			"source": "sso",
 			"name":   admin.Name,
 			"reason": "token_issue_failed",
@@ -123,7 +123,7 @@ func (s *AdminSSOService) Login(ctx context.Context, input AdminSSOLoginInput) (
 		return LoginOutput{}, apperror.Internal("internal server error", err)
 	}
 
-	recordLoginSuccess(ctx, s.audit, admin.ID, map[string]any{
+	recordLoginSuccess(ctx, s.audit, s.logger, admin.ID, map[string]any{
 		"source": "sso",
 		"name":   admin.Name,
 	})

@@ -47,7 +47,8 @@ func TestAdminUIEndpointServesLoginEntry(t *testing.T) {
 		"管理员登录",
 		`id="login-error"`,
 		`id="session-panel"`,
-		`/sar-admin/assets/app.js?v=20260608-sso`,
+		`/sar-admin/assets/app.js?v=20260710-security`,
+		`<meta name="referrer" content="no-referrer" />`,
 	}
 	for _, value := range required {
 		if !strings.Contains(body, value) {
@@ -86,9 +87,9 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 		`secret-reveal-panel`,
 		`regenerate-app-secret`,
 		`copy-secret`,
-		`originalSecret`,
 		`secretChanged`,
-		`secret: mode === "create" ? generateAppSecret() : item?.secret || ""`,
+		`secret: ""`,
+		`item.secret_configured`,
 		`留空保持当前密钥`,
 		`const showLogin = !loggedIn;`,
 		`closeLoginButton.disabled = !loggedIn`,
@@ -116,6 +117,11 @@ func TestAdminUIAssetsIncludeAuthLogic(t *testing.T) {
 	for _, value := range []string{`<option value="key">`, `Redis Key`, `key: String(values.key`} {
 		if strings.Contains(body, value) {
 			t.Fatalf("expected app script to remove redis key debug option %q", value)
+		}
+	}
+	for _, value := range []string{`item?.secret`, `item.secret ||`, `title="${escapeHTML(item.secret`} {
+		if strings.Contains(body, value) {
+			t.Fatalf("expected app UI not to retain full secrets via %q", value)
 		}
 	}
 	if strings.Contains(body, `if (response.status === 401) {

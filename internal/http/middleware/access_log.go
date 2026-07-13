@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"log"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,12 +30,36 @@ func AccessLog(logger *log.Logger) gin.HandlerFunc {
 		fields := []logx.Field{
 			logx.String("method", c.Request.Method),
 			logx.String("path", c.Request.URL.Path),
-			logx.String("query", c.Request.URL.RawQuery),
+			logx.String("query", redactQuery(c.Request.URL.RawQuery)),
 			logx.Int("status", c.Writer.Status()),
-			logx.String("client_ip", c.ClientIP()),
+			logx.String("client_ip_masked", maskIP(ClientIP(c))),
 			logx.String("errors", errorText),
 		}
 		fields = appendErrorResponseLogFields(c, fields)
 		level(logger, c.Request.Context(), startedAt, "http.access", "request completed", fields...)
 	}
+}
+
+func redactQuery(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return "[redacted-invalid-query]"
+	}
+	for key := range values {
+		if sensitiveQueryKey(key) {
+			values[key] = []string{"[redacted]"}
+		}
+	}
+	return values.Encode()
+}
+
+func sensitiveQueryKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	return strings.Contains(normalized, "token") ||
+		strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "password") ||
+		normalized == "authorization"
 }

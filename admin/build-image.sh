@@ -9,10 +9,11 @@ IMAGE_TAG="${IMAGE_TAG:-${DATE_TAG}_${COMMIT_ID}}"
 IMAGE_NAME="${IMAGE_NAME:-${IMAGE_REPOSITORY}:${IMAGE_TAG}}"
 DOCKERFILE_PATH="${DOCKERFILE_PATH:-Dockerfile}"
 GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+COMPOSE_ENV_FILE="${COMPOSE_ENV_FILE:-.compose-image.env}"
 SYNC_COMPOSE_IMAGE="${SYNC_COMPOSE_IMAGE:-true}"
 
-docker build \
+"${DOCKER_BIN}" build \
   --build-arg COMMIT_ID="${COMMIT_ID}" \
   --build-arg BUILD_TIME="${BUILD_TIME}" \
   --build-arg GOPROXY="${GOPROXY}" \
@@ -28,21 +29,14 @@ docker build \
   -t "${IMAGE_NAME}" \
   .
 
-if [ "${SYNC_COMPOSE_IMAGE}" = "true" ] && [ -f "${COMPOSE_FILE}" ]; then
-  tmp_file="$(mktemp)"
-  awk -v repo="${IMAGE_REPOSITORY}" -v image="${IMAGE_NAME}" '
-    {
-      marker = "image: " repo ":"
-      pos = index($0, marker)
-      if (pos > 0) {
-        indent = substr($0, 1, pos - 1)
-        $0 = indent "image: " image
-      }
-      print
-    }
-  ' "${COMPOSE_FILE}" > "${tmp_file}"
-  mv "${tmp_file}" "${COMPOSE_FILE}"
-  printf 'updated %s image to %s\n' "${COMPOSE_FILE}" "${IMAGE_NAME}"
+if [ "${SYNC_COMPOSE_IMAGE}" = "true" ]; then
+  tmp_file="$(mktemp "${COMPOSE_ENV_FILE}.tmp.XXXXXX")"
+  trap 'rm -f "${tmp_file}"' EXIT HUP INT TERM
+  printf 'MS_SAR_DASHBOARD_IMAGE=%s\n' "${IMAGE_NAME}" > "${tmp_file}"
+  mv "${tmp_file}" "${COMPOSE_ENV_FILE}"
+  tmp_file=""
+  trap - EXIT HUP INT TERM
+  printf 'updated local compose image env %s to %s\n' "${COMPOSE_ENV_FILE}" "${IMAGE_NAME}"
 fi
 
 printf '%s\n' "${IMAGE_NAME}"

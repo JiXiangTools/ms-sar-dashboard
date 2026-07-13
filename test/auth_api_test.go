@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -124,6 +125,16 @@ func TestAppAuthorizeAPILogsDetailedFailureReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAppAuthorizeAPIReturnsServiceUnavailableForRedisFailure(t *testing.T) {
+	engine := newAuthAPITestRouter(nil, nil, errors.New("redis unavailable"))
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/app", strings.NewReader(`{"appid":100001,"secret":"secret-1"}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+
+	assertAuthAPIResponse(t, recorder, http.StatusServiceUnavailable, "app authorization service unavailable", true)
 }
 
 func TestListAuthorizedAppsAPI(t *testing.T) {

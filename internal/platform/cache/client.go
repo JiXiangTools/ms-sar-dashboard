@@ -39,15 +39,16 @@ func buildUniversalOptions(cfg config.RedisConfig) *redis.UniversalOptions {
 		db = 0
 	}
 	options := &redis.UniversalOptions{
-		Addrs:        cfg.Addrs,
-		Username:     cfg.Username,
-		Password:     cfg.Password,
-		DB:           db,
-		MasterName:   strings.TrimSpace(cfg.MasterName),
-		DialTimeout:  cfg.DialTimeout,
-		ReadTimeout:  cfg.ReadTimeout,
-		WriteTimeout: cfg.WriteTimeout,
-		MaxRetries:   1,
+		Addrs:                 cfg.Addrs,
+		Username:              cfg.Username,
+		Password:              cfg.Password,
+		DB:                    db,
+		MasterName:            strings.TrimSpace(cfg.MasterName),
+		DialTimeout:           cfg.DialTimeout,
+		ReadTimeout:           cfg.ReadTimeout,
+		WriteTimeout:          cfg.WriteTimeout,
+		MaxRetries:            1,
+		ContextTimeoutEnabled: true,
 	}
 	if mode == ModeCluster {
 		options.IsClusterMode = true

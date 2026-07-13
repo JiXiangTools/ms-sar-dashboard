@@ -15,7 +15,9 @@ import (
 
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/config"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/health"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/middleware"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/router"
+	appmetrics "github.com/JiXiangTools/ms-sar-dashboard/internal/metrics"
 	platformcache "github.com/JiXiangTools/ms-sar-dashboard/internal/platform/cache"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/database"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/elasticsearch"
@@ -46,10 +48,19 @@ func New(opts Options) (*App, error) {
 	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.LUTC|log.Lmicroseconds)
+	metricRegistry := appmetrics.New()
 
 	databaseClient, err := database.New(cfg.Database)
 	if err != nil {
 		return nil, fmt.Errorf("init database: %w", err)
+	}
+	migrationCtx, migrationCancel := context.WithTimeout(context.Background(), cfg.Database.MigrationTimeout)
+	err = database.VerifyMigrations(migrationCtx, databaseClient.DB)
+	migrationCancel()
+	metricRegistry.ObserveStartupCheck(appmetrics.StartupMigrationVerify, outcome(err))
+	if err != nil {
+		_ = databaseClient.Close()
+		return nil, fmt.Errorf("verify database migrations: %w", err)
 	}
 
 	cacheClient, err := platformcache.New(cfg.Redis)
@@ -76,16 +87,29 @@ func New(opts Options) (*App, error) {
 		_ = databaseClient.Close()
 		return nil, fmt.Errorf("init services: %w", err)
 	}
+	projectionCtx, projectionCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err = services.Apps.RebuildAuthorizationProjection(projectionCtx)
+	projectionCancel()
+	metricRegistry.ObserveProjectionReconcile(appmetrics.ProjectionStartup, outcome(err))
+	if err != nil {
+		_ = cacheClient.Close()
+		_ = databaseClient.Close()
+		return nil, fmt.Errorf("rebuild app authorization projection: %w", err)
+	}
 	engine := router.New(cfg, logger, router.Dependencies{
-		HealthService: healthService,
-		Services:      services,
+		HealthService:  healthService,
+		Services:       services,
+		Metrics:        metricRegistry,
+		RateLimitStore: middleware.NewRedisRateLimitStore(cacheClient.Client, cfg.Redis.KeyPrefix, cfg.Security.RateLimitStoreTimeout),
 	})
 
 	httpServer := &http.Server{
-		Addr:         net.JoinHostPort(cfg.App.Host, strconv.Itoa(cfg.App.Port)),
-		Handler:      engine,
-		ReadTimeout:  cfg.App.ReadTimeout,
-		WriteTimeout: cfg.App.WriteTimeout,
+		Addr:              net.JoinHostPort(cfg.App.Host, strconv.Itoa(cfg.App.Port)),
+		Handler:           engine,
+		ReadHeaderTimeout: cfg.App.ReadHeaderTimeout,
+		ReadTimeout:       cfg.App.ReadTimeout,
+		WriteTimeout:      cfg.App.WriteTimeout,
+		IdleTimeout:       cfg.App.IdleTimeout,
 	}
 
 	return &App{
@@ -96,6 +120,13 @@ func New(opts Options) (*App, error) {
 		cache:         cacheClient,
 		elasticsearch: esClient,
 	}, nil
+}
+
+func outcome(err error) appmetrics.Outcome {
+	if err == nil {
+		return appmetrics.OutcomeSuccess
+	}
+	return appmetrics.OutcomeError
 }
 
 func (a *App) Run() error {

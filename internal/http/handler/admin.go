@@ -1,24 +1,29 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/apperror"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/http/middleware"
+	appmetrics "github.com/JiXiangTools/ms-sar-dashboard/internal/metrics"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/response"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/service"
 )
 
 type AdminHandler struct {
-	auth  *service.AdminAuthService
-	sso   *service.AdminSSOService
-	apps  *service.AppService
-	logs  *service.LogService
-	debug *service.DebugService
+	auth   *service.AdminAuthService
+	sso    *service.AdminSSOService
+	apps   *service.AppService
+	logs   *service.LogService
+	debug  *service.DebugService
+	metric *appmetrics.Registry
 }
 
 type loginRequest struct {
@@ -40,6 +45,24 @@ type updateAppRequest struct {
 	Name   *string `json:"name"`
 	Secret *string `json:"secret"`
 	Remark *string `json:"remark"`
+}
+
+type appResponse struct {
+	ID               int64     `json:"id"`
+	Name             string    `json:"name"`
+	Secret           string    `json:"secret,omitempty"`
+	SecretConfigured bool      `json:"secret_configured"`
+	Remark           string    `json:"remark"`
+	Disabled         bool      `json:"disabled"`
+	CreateTime       time.Time `json:"create_time"`
+	LastUpdateTime   time.Time `json:"last_update_time"`
+}
+
+type appPageResponse struct {
+	Items    []appResponse `json:"items"`
+	Page     int           `json:"page"`
+	PageSize int           `json:"page_size"`
+	Total    int64         `json:"total"`
 }
 
 type appAuthorizeRequest struct {
@@ -78,13 +101,19 @@ type esRawDebugRequest struct {
 	Input  string `json:"input"`
 }
 
-func NewAdminHandler(auth *service.AdminAuthService, sso *service.AdminSSOService, apps *service.AppService, logs *service.LogService, debug *service.DebugService) *AdminHandler {
-	return &AdminHandler{auth: auth, sso: sso, apps: apps, logs: logs, debug: debug}
+func NewAdminHandler(auth *service.AdminAuthService, sso *service.AdminSSOService, apps *service.AppService, logs *service.LogService, debug *service.DebugService, metricRegistry *appmetrics.Registry) *AdminHandler {
+	return &AdminHandler{auth: auth, sso: sso, apps: apps, logs: logs, debug: debug, metric: metricRegistry}
 }
 
 func (h *AdminHandler) Login(c *gin.Context) {
 	req, ok := bindJSON[loginRequest](c)
 	if !ok {
+		h.metric.ObserveAdminAuth(appmetrics.AdminAuthLogin, appmetrics.OutcomeInvalidRequest)
+		return
+	}
+	if h.auth == nil {
+		h.metric.ObserveAdminAuth(appmetrics.AdminAuthLogin, appmetrics.OutcomeError)
+		response.Error(c, http.StatusInternalServerError, "internal server error", nil)
 		return
 	}
 
@@ -93,9 +122,11 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		Password: req.Password,
 	})
 	if err != nil {
+		h.metric.ObserveAdminAuth(appmetrics.AdminAuthLogin, metricOutcome(err))
 		writeError(c, err)
 		return
 	}
+	h.metric.ObserveAdminAuth(appmetrics.AdminAuthLogin, appmetrics.OutcomeSuccess)
 	response.Success(c, result)
 }
 
@@ -103,7 +134,11 @@ func (h *AdminHandler) Logout(c *gin.Context) {
 	admin, ok := c.Get(middleware.ContextKeyAdmin)
 	if ok {
 		if typed, ok := admin.(domain.Admin); ok {
-			_ = h.auth.Logout(c.Request.Context(), typed)
+			token, _ := c.Get(middleware.ContextKeyAccessToken)
+			if err := h.auth.Logout(c.Request.Context(), typed, strings.TrimSpace(fmt.Sprint(token))); err != nil {
+				writeError(c, err)
+				return
+			}
 		}
 	}
 	response.Success(c, gin.H{"success": true})
@@ -125,9 +160,11 @@ func (h *AdminHandler) SSOStatus(c *gin.Context) {
 func (h *AdminHandler) SSOLogin(c *gin.Context) {
 	req, ok := bindJSON[ssoLoginRequest](c)
 	if !ok {
+		h.metric.ObserveAdminAuth(appmetrics.AdminAuthSSOLogin, appmetrics.OutcomeInvalidRequest)
 		return
 	}
 	if h.sso == nil {
+		h.metric.ObserveAdminAuth(appmetrics.AdminAuthSSOLogin, appmetrics.OutcomeDenied)
 		response.Error(c, http.StatusForbidden, "sso disabled", nil)
 		return
 	}
@@ -135,29 +172,36 @@ func (h *AdminHandler) SSOLogin(c *gin.Context) {
 		Token: req.Token,
 	})
 	if err != nil {
+		h.metric.ObserveAdminAuth(appmetrics.AdminAuthSSOLogin, metricOutcome(err))
 		writeError(c, err)
 		return
 	}
+	h.metric.ObserveAdminAuth(appmetrics.AdminAuthSSOLogin, appmetrics.OutcomeSuccess)
 	response.Success(c, result)
 }
 
 func (h *AdminHandler) AppAuthorize(c *gin.Context) {
 	req, ok := bindJSON[appAuthorizeRequest](c)
 	if !ok {
+		h.metric.ObserveClientAuth(appmetrics.OutcomeInvalidRequest)
 		return
 	}
 	if req.AppID <= 0 || strings.TrimSpace(req.Secret) == "" {
+		h.metric.ObserveClientAuth(appmetrics.OutcomeInvalidRequest)
 		middleware.WriteAppAuthError(c, req.AppID, "appid_or_secret_required")
 		return
 	}
 	if h.apps == nil {
+		h.metric.ObserveClientAuth(appmetrics.OutcomeError)
 		response.Error(c, http.StatusInternalServerError, "internal server error", nil)
 		return
 	}
 	if _, err := h.apps.Authorize(c.Request.Context(), strconv.FormatInt(req.AppID, 10), req.Secret); err != nil {
-		middleware.WriteAppAuthError(c, req.AppID, service.AppAuthFailureReason(err))
+		h.metric.ObserveClientAuth(metricOutcome(err))
+		middleware.WriteAppAuthFailure(c, req.AppID, err)
 		return
 	}
+	h.metric.ObserveClientAuth(appmetrics.OutcomeSuccess)
 	response.Success(c, nil)
 }
 
@@ -189,7 +233,11 @@ func (h *AdminHandler) ListApps(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	response.Success(c, page)
+	items := make([]appResponse, 0, len(page.Items))
+	for _, app := range page.Items {
+		items = append(items, newAppResponse(app, false))
+	}
+	response.Success(c, appPageResponse{Items: items, Page: page.Page, PageSize: page.PageSize, Total: page.Total})
 }
 
 func (h *AdminHandler) CreateApp(c *gin.Context) {
@@ -206,7 +254,7 @@ func (h *AdminHandler) CreateApp(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	response.Success(c, app)
+	response.Success(c, newAppResponse(app, true))
 }
 
 func (h *AdminHandler) UpdateApp(c *gin.Context) {
@@ -227,7 +275,7 @@ func (h *AdminHandler) UpdateApp(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	response.Success(c, app)
+	response.Success(c, newAppResponse(app, req.Secret != nil))
 }
 
 func (h *AdminHandler) DeleteApp(c *gin.Context) {
@@ -239,6 +287,21 @@ func (h *AdminHandler) DeleteApp(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
+	response.Success(c, gin.H{"success": true})
+}
+
+func (h *AdminHandler) ReconcileAppAuthorization(c *gin.Context) {
+	if h.apps == nil {
+		h.metric.ObserveProjectionReconcile(appmetrics.ProjectionAdminReconcile, appmetrics.OutcomeError)
+		response.Error(c, http.StatusInternalServerError, "internal server error", nil)
+		return
+	}
+	if err := h.apps.ReconcileAuthorizationProjection(c.Request.Context(), adminID(c)); err != nil {
+		h.metric.ObserveProjectionReconcile(appmetrics.ProjectionAdminReconcile, metricOutcome(err))
+		writeError(c, err)
+		return
+	}
+	h.metric.ObserveProjectionReconcile(appmetrics.ProjectionAdminReconcile, appmetrics.OutcomeSuccess)
 	response.Success(c, gin.H{"success": true})
 }
 
@@ -387,4 +450,30 @@ func int64Param(c *gin.Context, name string) (int64, bool) {
 
 func adminID(c *gin.Context) int64 {
 	return c.GetInt64(middleware.ContextKeyAdminID)
+}
+
+func newAppResponse(app domain.App, includeSecret bool) appResponse {
+	result := appResponse{
+		ID:               app.ID,
+		Name:             app.Name,
+		SecretConfigured: strings.TrimSpace(app.Secret) != "",
+		Remark:           app.Remark,
+		Disabled:         app.Disabled,
+		CreateTime:       app.CreateTime,
+		LastUpdateTime:   app.LastUpdateTime,
+	}
+	if includeSecret {
+		result.Secret = app.Secret
+	}
+	return result
+}
+
+func metricOutcome(err error) appmetrics.Outcome {
+	if err == nil {
+		return appmetrics.OutcomeSuccess
+	}
+	if appErr, ok := apperror.As(err); ok {
+		return appmetrics.OutcomeFromStatus(appErr.HTTPStatus)
+	}
+	return appmetrics.OutcomeError
 }

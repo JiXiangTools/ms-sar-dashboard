@@ -1,24 +1,31 @@
 app:
   name: ms-sar-dashboard
   env: dev
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8081
+  read_header_timeout: 3s
   read_timeout: 5s
   write_timeout: 10s
+  idle_timeout: 60s
   shutdown_timeout: 10s
 
+security:
+  max_request_body_bytes: 1048576
+  trusted_proxy_cidrs: []
+  rate_limit_store_timeout: 100ms
+
 auth:
-  jwt_secret: ms-sar-dashboard-dev-secret
+  jwt_secret: ""
   access_token_ttl: 2h
   issuer: ms-sar-dashboard
 
 sso:
-  enabled: true
-  admin_ui_url: "http://server.muguayun.top:8589/uc-admin"
-  api_base_url: "http://server.muguayun.top:8589/"
-  app_id: "100001"
-  app_secret: "be15884351173848c685cc5d508a783b60ebe24c1b5205dc"
-  redirect_url: "http://127.0.0.1:8081/sar-admin"
+  enabled: false
+  admin_ui_url: ""
+  api_base_url: ""
+  app_id: ""
+  app_secret: ""
+  redirect_url: ""
   request_timeout: 3s
 
 log:
@@ -30,6 +37,7 @@ database:
   max_idle_conns: 5
   conn_max_lifetime: 30m
   health_check_timeout: 2s
+  migration_timeout: 60s
 
 redis:
   mode: standalone

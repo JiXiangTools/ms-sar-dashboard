@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -31,7 +33,7 @@ type Service struct {
 func NewService(cfg config.AuthConfig) *Service {
 	secret := strings.TrimSpace(cfg.JWTSecret)
 	if secret == "" {
-		secret = "ms-sar-dashboard-dev-secret"
+		secret = ephemeralSecret()
 	}
 	issuer := strings.TrimSpace(cfg.Issuer)
 	if issuer == "" {
@@ -48,6 +50,22 @@ func NewService(cfg config.AuthConfig) *Service {
 	}
 }
 
+func ephemeralSecret() string {
+	secret, err := randomHex(32)
+	if err != nil {
+		panic("generate ephemeral JWT secret: " + err.Error())
+	}
+	return secret
+}
+
+func randomHex(size int) (string, error) {
+	raw := make([]byte, size)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
+
 func (s *Service) HashPassword(password string) (string, error) {
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -62,6 +80,10 @@ func (s *Service) ComparePassword(hashedPassword string, password string) error 
 
 func (s *Service) IssueAccessToken(admin domain.Admin) (string, error) {
 	now := time.Now().UTC()
+	tokenID, err := randomHex(16)
+	if err != nil {
+		return "", err
+	}
 	claims := Claims{
 		AdminID:        admin.ID,
 		TokenType:      TokenTypeAccess,
@@ -70,6 +92,7 @@ func (s *Service) IssueAccessToken(admin domain.Admin) (string, error) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer,
 			Subject:   strings.TrimSpace(admin.Name),
+			ID:        tokenID,
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTokenTTL)),

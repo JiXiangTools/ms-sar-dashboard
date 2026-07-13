@@ -9,15 +9,21 @@ GO_BIN="${GO_BIN:-go}"
 SERVICES_DEPLOY_DIR="${MSSAR_SERVICES_DEPLOY_DIR}"
 BASE_DIR="${SERVICES_DEPLOY_DIR}/base"
 POSTGRES_CONTAINER="${MSSAR_POSTGRES_CONTAINER:-services-deploy-postgres}"
-ADMIN_NAME="${MSSAR_INIT_ADMIN_NAME:-admin}"
-ADMIN_PASSWORD="${MSSAR_INIT_ADMIN_PASSWORD:-dWz@240926!}"
+ADMIN_NAME="${MSSAR_INIT_ADMIN_NAME:?MSSAR_INIT_ADMIN_NAME is required}"
+ADMIN_PASSWORD="${MSSAR_INIT_ADMIN_PASSWORD:?MSSAR_INIT_ADMIN_PASSWORD is required}"
 RESET_DATABASE="${RESET_DATABASE:-false}"
+UPDATE_ADMIN="${MSSAR_UPDATE_ADMIN:-false}"
 
 . "${SCRIPT_DIR}/services-deploy-env.sh"
 resolve_services_deploy_env
 load_services_deploy_defaults
 
 TARGET_DSN="${MSSAR_DATABASE_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/ms_sar_dashboard?sslmode=disable}"
+
+if [ "${RESET_DATABASE}" = "true" ]; then
+  printf 'RESET_DATABASE is no longer supported because migrations never delete an existing database; use a separate disposable database for destructive testing\n' >&2
+  exit 2
+fi
 
 if ! command -v "${DOCKER_BIN}" >/dev/null 2>&1; then
   printf 'docker executable not found: %s\n' "${DOCKER_BIN}" >&2
@@ -70,42 +76,25 @@ wait_for_postgres
 
 admin_password_hash="$("${GO_BIN}" run ./cmd/hash-password -password "${ADMIN_PASSWORD}")"
 
-if [ "${RESET_DATABASE}" = "true" ]; then
+database_exists="$(
+  "${DOCKER_BIN}" exec -i "${POSTGRES_CONTAINER}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v db_name="${database_name}" -tA <<'SQL' | tr -d '[:space:]'
+SELECT 1 FROM pg_database WHERE datname = :'db_name';
+SQL
+)"
+if [ -z "${database_exists}" ]; then
   "${DOCKER_BIN}" exec -i "${POSTGRES_CONTAINER}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v db_name="${database_name}" <<'SQL'
-SELECT pg_terminate_backend(pid)
-FROM pg_stat_activity
-WHERE datname = :'db_name'
-  AND pid <> pg_backend_pid();
-DROP DATABASE IF EXISTS :"db_name";
 CREATE DATABASE :"db_name" OWNER postgres;
 SQL
-else
-  database_exists="$("${DOCKER_BIN}" exec -i "${POSTGRES_CONTAINER}" psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '${database_name}'" | tr -d '[:space:]')"
-  if [ -z "${database_exists}" ]; then
-    "${DOCKER_BIN}" exec -i "${POSTGRES_CONTAINER}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v db_name="${database_name}" <<'SQL'
-CREATE DATABASE :"db_name" OWNER postgres;
-SQL
-  fi
 fi
 
-seed_required="false"
-schema_exists="$("${DOCKER_BIN}" exec -i "${POSTGRES_CONTAINER}" psql -U postgres -d "${database_name}" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 't_admin'" | tr -d '[:space:]')"
-if [ "${RESET_DATABASE}" = "true" ] || [ -z "${schema_exists}" ]; then
-  "${DOCKER_BIN}" exec -i "${POSTGRES_CONTAINER}" psql -U postgres -d "${database_name}" -v ON_ERROR_STOP=1 < upgrade/sql/schema.sql
-  seed_required="true"
-else
-  admin_exists="$("${DOCKER_BIN}" exec -i "${POSTGRES_CONTAINER}" psql -U postgres -d "${database_name}" -tAc "SELECT 1 FROM t_admin WHERE name = '${ADMIN_NAME}' AND disabled = FALSE LIMIT 1" | tr -d '[:space:]')"
-  if [ -z "${admin_exists}" ]; then
-    seed_required="true"
-  fi
+set -- \
+  -timeout "${MSSAR_DATABASE_MIGRATION_TIMEOUT:-60s}"
+if [ "${UPDATE_ADMIN}" = "true" ]; then
+  set -- "$@" -update-admin
 fi
-
-if [ "${seed_required}" = "true" ]; then
-  "${DOCKER_BIN}" exec -i "${POSTGRES_CONTAINER}" psql -U postgres -d "${database_name}" \
-    -v ON_ERROR_STOP=1 \
-    -v admin_name="${ADMIN_NAME}" \
-    -v admin_password_hash="${admin_password_hash}" \
-    < upgrade/sql/data.sql
-fi
+MSSAR_DATABASE_DSN="${TARGET_DSN}" \
+MSSAR_INIT_ADMIN_NAME="${ADMIN_NAME}" \
+MSSAR_INIT_ADMIN_PASSWORD_HASH="${admin_password_hash}" \
+  "${GO_BIN}" run ./cmd/ms-sar-dbtool "$@"
 
 printf 'prepared PostgreSQL database %s with admin %s\n' "${database_name}" "${ADMIN_NAME}"

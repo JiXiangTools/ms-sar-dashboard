@@ -17,7 +17,8 @@ func TestStartDebugScriptBootstrapsServicesDeploy(t *testing.T) {
 		"services-deploy-elasticsearch",
 		"services-deploy-env.sh",
 		"services_compose_up postgres redis elasticsearch",
-		"KEYS 'app_auth_*'",
+		`key_pattern='app_auth_*'`,
+		`KEYS "${key_pattern}"`,
 		"MSSAR_REDIS_PASSWORD",
 		"--no-auth-warning",
 	}

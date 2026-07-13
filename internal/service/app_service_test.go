@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"reflect"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/apperror"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/repository"
@@ -82,6 +84,103 @@ func TestAppServiceListAuthorizedAppsLoadsRepositoryAndCachesOnMiss(t *testing.T
 		t.Fatalf("expected one repository call, got %d", repo.listEnabledAppsCalls)
 	}
 	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], want)
+}
+
+func TestAppServiceRebuildsAuthorizationProjectionAfterRedisFlush(t *testing.T) {
+	repo := &fakeAppRepository{apps: map[int64]domain.App{
+		1: testApp(1, "alpha", "secret-1"),
+		2: testApp(2, "beta", "secret-2"),
+	}}
+	cache := &fakeAppRedis{}
+	service := newTestAppService(repo, cache)
+
+	if err := service.RebuildAuthorizationProjection(context.Background()); err != nil {
+		t.Fatalf("initial rebuild: %v", err)
+	}
+	cache.hashes = make(map[string]map[string]string)
+	cache.stringValues = make(map[string]string)
+
+	app, err := service.Authorize(context.Background(), "2", "secret-2")
+	if err != nil {
+		t.Fatalf("authorize after redis flush: %v", err)
+	}
+	if app.ID != 2 {
+		t.Fatalf("expected app 2, got %d", app.ID)
+	}
+	if got := cache.hashValue(appAuthKey(1), "secret"); got != "secret-1" {
+		t.Fatalf("expected full projection rebuild, got app 1 secret %q", got)
+	}
+	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], []AppAuthSummary{
+		{AppID: 1, Disabled: false},
+		{AppID: 2, Disabled: false},
+	})
+}
+
+func TestAppServiceUsesRedisKeyPrefix(t *testing.T) {
+	repo := &fakeAppRepository{apps: map[int64]domain.App{1: testApp(1, "alpha", "secret-1")}}
+	cache := &fakeAppRedis{}
+	service := newTestAppService(repo, cache)
+	service.keyPrefix = "dashboard"
+
+	if err := service.RebuildAuthorizationProjection(context.Background()); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	if got := cache.hashValue("dashboard:app_auth_1", "secret"); got != "secret-1" {
+		t.Fatalf("expected prefixed app key, got secret %q", got)
+	}
+	if _, ok := cache.stringValues["dashboard:app_auth_allappids"]; !ok {
+		t.Fatal("expected prefixed app index key")
+	}
+}
+
+func TestAppServiceRebuildRetriesTransientRedisFailure(t *testing.T) {
+	repo := &fakeAppRepository{apps: map[int64]domain.App{1: testApp(1, "alpha", "secret-1")}}
+	cache := &fakeAppRedis{
+		failAfterWriteRemaining: map[string]int{appAuthKey(1): 1},
+		failErr:                 errors.New("temporary redis failure"),
+	}
+	service := newTestAppService(repo, cache)
+
+	if err := service.RebuildAuthorizationProjection(context.Background()); err != nil {
+		t.Fatalf("expected transient failure to be retried: %v", err)
+	}
+	if got := cache.hashValue(appAuthKey(1), "secret"); got != "secret-1" {
+		t.Fatalf("expected rebuilt authorization, got %q", got)
+	}
+	if repo.listEnabledAppsCalls != 2 {
+		t.Fatalf("expected two rebuild attempts, got %d", repo.listEnabledAppsCalls)
+	}
+}
+
+func TestAppServiceRedisReadFailureIsServiceUnavailable(t *testing.T) {
+	service := newTestAppService(&fakeAppRepository{}, &fakeAppRedis{hgetErr: errors.New("redis unavailable")})
+
+	_, err := service.Authorize(context.Background(), "1", "secret-1")
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("expected service unavailable, got %v", err)
+	}
+	if got := AppAuthFailureReason(err); got != appAuthReasonRedisReadFailed {
+		t.Fatalf("expected redis failure reason, got %q", got)
+	}
+}
+
+func TestAppServiceCompensationUsesIndependentContext(t *testing.T) {
+	repo := &fakeAppRepository{nextID: 1}
+	cache := &fakeAppRedis{
+		failAfterWriteRemaining: map[string]int{appAuthKey(1): 1},
+		failErr:                 errors.New("redis write failed"),
+	}
+	service := newTestAppService(repo, cache)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := service.Create(ctx, 7, AppCreateInput{Name: "alpha", Secret: "secret-1"}); err == nil {
+		t.Fatal("expected create to fail")
+	}
+	if repo.hardDeleteContextErr != nil {
+		t.Fatalf("expected independent compensation context, got %v", repo.hardDeleteContextErr)
+	}
 }
 
 func TestAppServiceCreateRefreshesAllAppAuthKeys(t *testing.T) {
@@ -247,7 +346,7 @@ func TestAppServiceUpdateRollbackRestoresRedisKeyWhenRefreshFails(t *testing.T) 
 	if got := cache.hashValue(appAuthKey(2), "secret"); got != "secret-2-old" {
 		t.Fatalf("expected redis rollback to restore old secret, got %q", got)
 	}
-	if !reflect.DeepEqual(cache.hsetKeys, []string{appAuthKey(1), appAuthKey(2), appAuthKey(2)}) {
+	if !reflect.DeepEqual(cache.hsetKeys, []string{appAuthKey(1), appAuthKey(2), appAuthKey(1), appAuthKey(2)}) {
 		t.Fatalf("expected rollback to rewrite the failed app auth key, got %#v", cache.hsetKeys)
 	}
 	assertCachedAppAuthSummaries(t, cache.stringValues[appAuthAllAppIDsKey()], []AppAuthSummary{
@@ -292,6 +391,65 @@ func TestAppServiceDeleteRollbackRestoresRedisKeyAndIndexWhenIndexRefreshFails(t
 		{AppID: 1, Disabled: false},
 		{AppID: 2, Disabled: false},
 	})
+}
+
+func TestAppServiceUpdateCompensationDoesNotReenableConcurrentlyDeletedApp(t *testing.T) {
+	repo := &fakeAppRepository{
+		apps: map[int64]domain.App{
+			1: testApp(1, "alpha", "secret-1"),
+			2: testApp(2, "beta", "secret-2"),
+		},
+	}
+	repo.onListEnabledApps = func() {
+		app := repo.apps[2]
+		app.Disabled = true
+		app.LastUpdateTime = app.LastUpdateTime.Add(time.Second)
+		repo.apps[2] = app
+	}
+	cache := &fakeAppRedis{
+		hashes: map[string]map[string]string{
+			appAuthKey(1): {"secret": "secret-1"},
+			appAuthKey(2): {"secret": "secret-2"},
+		},
+		stringValues: map[string]string{
+			appAuthAllAppIDsKey(): `[{"appid":1,"disabled":false},{"appid":2,"disabled":false}]`,
+		},
+		failAfterSetRemaining: map[string]int{appAuthAllAppIDsKey(): 1},
+		failErr:               errors.New("redis set failed"),
+	}
+	service := newTestAppService(repo, cache)
+
+	if _, err := service.Update(context.Background(), 7, 2, AppUpdateInput{Name: stringPtr("beta-updated")}); err == nil {
+		t.Fatal("expected update to report projection failure")
+	}
+	if !repo.apps[2].Disabled {
+		t.Fatal("expected concurrent delete to remain disabled")
+	}
+	if _, ok := cache.hashes[appAuthKey(2)]; ok {
+		t.Fatal("expected compensation reconciliation to remove deleted app authorization")
+	}
+}
+
+func TestAppServiceRejectsConcurrentUpdate(t *testing.T) {
+	repo := &fakeAppRepository{apps: map[int64]domain.App{
+		2: testApp(2, "beta", "secret-2"),
+	}}
+	repo.onUpdateApp = func() {
+		concurrent := repo.apps[2]
+		concurrent.Name = "changed-elsewhere"
+		concurrent.LastUpdateTime = concurrent.LastUpdateTime.Add(time.Second)
+		repo.apps[2] = concurrent
+	}
+	service := newTestAppService(repo, &fakeAppRedis{})
+
+	_, err := service.Update(context.Background(), 7, 2, AppUpdateInput{Name: stringPtr("my-change")})
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.HTTPStatus != http.StatusConflict {
+		t.Fatalf("expected conflict, got %v", err)
+	}
+	if got := repo.apps[2].Name; got != "changed-elsewhere" {
+		t.Fatalf("concurrent update was overwritten: %q", got)
+	}
 }
 
 func TestAppServiceCreateLogsRefreshedAppIDsAndSuccess(t *testing.T) {
@@ -397,6 +555,9 @@ type fakeAppRepository struct {
 	nextID               int64
 	apps                 map[int64]domain.App
 	listEnabledAppsCalls int
+	hardDeleteContextErr error
+	onListEnabledApps    func()
+	onUpdateApp          func()
 }
 
 func (r *fakeAppRepository) ListApps(_ context.Context, _ *int64, _ string, page int, pageSize int, includeDisabled bool) (domain.Page[domain.App], error) {
@@ -414,6 +575,11 @@ func (r *fakeAppRepository) ListApps(_ context.Context, _ *int64, _ string, page
 
 func (r *fakeAppRepository) ListEnabledApps(_ context.Context) ([]domain.App, error) {
 	r.listEnabledAppsCalls++
+	if r.onListEnabledApps != nil {
+		hook := r.onListEnabledApps
+		r.onListEnabledApps = nil
+		hook()
+	}
 	return r.listApps(false)
 }
 
@@ -428,20 +594,32 @@ func (r *fakeAppRepository) CreateApp(_ context.Context, app domain.App) (domain
 	return app, nil
 }
 
-func (r *fakeAppRepository) UpdateApp(_ context.Context, app domain.App) (domain.App, error) {
+func (r *fakeAppRepository) UpdateApp(_ context.Context, app domain.App, expectedLastUpdateTime time.Time) (domain.App, error) {
 	r.ensureStore()
-	if _, ok := r.apps[app.ID]; !ok {
+	if r.onUpdateApp != nil {
+		hook := r.onUpdateApp
+		r.onUpdateApp = nil
+		hook()
+	}
+	current, ok := r.apps[app.ID]
+	if !ok {
 		return domain.App{}, repository.ErrNotFound
+	}
+	if !current.LastUpdateTime.Equal(expectedLastUpdateTime) {
+		return domain.App{}, repository.ErrConflict
 	}
 	r.apps[app.ID] = app
 	return app, nil
 }
 
-func (r *fakeAppRepository) DeleteApp(_ context.Context, appID int64) error {
+func (r *fakeAppRepository) DeleteApp(_ context.Context, appID int64, expectedLastUpdateTime time.Time) error {
 	r.ensureStore()
 	app, ok := r.apps[appID]
 	if !ok {
 		return repository.ErrNotFound
+	}
+	if !app.LastUpdateTime.Equal(expectedLastUpdateTime) {
+		return repository.ErrConflict
 	}
 	app.Disabled = true
 	app.LastUpdateTime = time.Now().UTC()
@@ -449,13 +627,24 @@ func (r *fakeAppRepository) DeleteApp(_ context.Context, appID int64) error {
 	return nil
 }
 
-func (r *fakeAppRepository) RestoreApp(_ context.Context, app domain.App) error {
+func (r *fakeAppRepository) RestoreApp(_ context.Context, app domain.App, expectedLastUpdateTime time.Time, restoreDisabled bool) error {
 	r.ensureStore()
+	current, ok := r.apps[app.ID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	if !current.LastUpdateTime.Equal(expectedLastUpdateTime) {
+		return repository.ErrConflict
+	}
+	if !restoreDisabled {
+		app.Disabled = current.Disabled
+	}
 	r.apps[app.ID] = app
 	return nil
 }
 
-func (r *fakeAppRepository) HardDeleteApp(_ context.Context, appID int64) error {
+func (r *fakeAppRepository) HardDeleteApp(ctx context.Context, appID int64) error {
+	r.hardDeleteContextErr = ctx.Err()
 	r.ensureStore()
 	if _, ok := r.apps[appID]; !ok {
 		return repository.ErrNotFound
@@ -505,6 +694,7 @@ type fakeAppRedis struct {
 	failAfterWriteRemaining map[string]int
 	failAfterSetRemaining   map[string]int
 	failErr                 error
+	hgetErr                 error
 }
 
 func (r *fakeAppRedis) HSet(_ context.Context, key string, values ...any) *redis.IntCmd {
@@ -560,6 +750,9 @@ func (r *fakeAppRedis) Set(_ context.Context, key string, value any, _ time.Dura
 }
 
 func (r *fakeAppRedis) HGetAll(_ context.Context, key string) *redis.MapStringStringCmd {
+	if r.hgetErr != nil {
+		return redis.NewMapStringStringResult(nil, r.hgetErr)
+	}
 	r.ensureStore()
 	values := make(map[string]string, len(r.hashes[key]))
 	for field, value := range r.hashes[key] {

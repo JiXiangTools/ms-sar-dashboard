@@ -2,13 +2,16 @@
 set -eu
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8081}"
-ADMIN_NAME="${ADMIN_NAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-dWz@240926!}"
+ADMIN_NAME="${ADMIN_NAME:?ADMIN_NAME is required}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}"
 
 if ! command -v curl >/dev/null 2>&1; then
   printf 'curl executable not found\n' >&2
   exit 1
 fi
+
+curl -fsS "${BASE_URL}/health" >/dev/null
+curl -fsS "${BASE_URL}/metrics" >/dev/null
 
 login_response="$(curl -sS -X POST "${BASE_URL}/api/v1/admin/auth/login" \
   -H 'content-type: application/json' \

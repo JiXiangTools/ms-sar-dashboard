@@ -222,19 +222,25 @@ func (r *Repository) CreateApp(ctx context.Context, app domain.App) (domain.App,
 	return toApp(model), nil
 }
 
-func (r *Repository) UpdateApp(ctx context.Context, app domain.App) (domain.App, error) {
+func (r *Repository) UpdateApp(ctx context.Context, app domain.App, expectedLastUpdateTime time.Time) (domain.App, error) {
 	var updated domain.App
 	err := r.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var model appModel
-		if err := tx.Where("id = ?", app.ID).First(&model).Error; err != nil {
-			return mapSQLError(err)
+		result := tx.Model(&appModel{}).
+			Where("id = ? AND last_update_time = ?", app.ID, expectedLastUpdateTime).
+			Updates(map[string]any{
+				"name":             app.Name,
+				"secret":           app.Secret,
+				"remark":           app.Remark,
+				"last_update_time": app.LastUpdateTime,
+			})
+		if result.Error != nil {
+			return mapSQLError(result.Error)
 		}
-		model.Name = app.Name
-		model.Secret = app.Secret
-		model.Remark = app.Remark
-		model.Disabled = app.Disabled
-		model.LastUpdateTime = app.LastUpdateTime
-		if err := tx.Save(&model).Error; err != nil {
+		if result.RowsAffected == 0 {
+			return ErrConflict
+		}
+		if err := tx.Where("id = ?", app.ID).First(&model).Error; err != nil {
 			return mapSQLError(err)
 		}
 		updated = toApp(model)
@@ -243,37 +249,44 @@ func (r *Repository) UpdateApp(ctx context.Context, app domain.App) (domain.App,
 	return updated, mapSQLError(err)
 }
 
-func (r *Repository) DeleteApp(ctx context.Context, appID int64) error {
+func (r *Repository) DeleteApp(ctx context.Context, appID int64, expectedLastUpdateTime time.Time) error {
 	return mapSQLError(r.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&appModel{}).Where("id = ?", appID).Updates(map[string]any{
-			"disabled":         true,
-			"last_update_time": nowValue(),
-		})
+		result := tx.Model(&appModel{}).
+			Where("id = ? AND last_update_time = ?", appID, expectedLastUpdateTime).
+			Updates(map[string]any{
+				"disabled":         true,
+				"last_update_time": nowValue(),
+			})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			return ErrNotFound
+			return ErrConflict
 		}
 		return nil
 	}))
 }
 
-func (r *Repository) RestoreApp(ctx context.Context, app domain.App) error {
+func (r *Repository) RestoreApp(ctx context.Context, app domain.App, expectedLastUpdateTime time.Time, restoreDisabled bool) error {
 	return mapSQLError(r.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&appModel{}).Where("id = ?", app.ID).Updates(map[string]any{
+		updates := map[string]any{
 			"name":             app.Name,
 			"secret":           app.Secret,
 			"remark":           app.Remark,
-			"disabled":         app.Disabled,
 			"last_update_time": app.LastUpdateTime,
 			"create_time":      app.CreateTime,
-		})
+		}
+		if restoreDisabled {
+			updates["disabled"] = app.Disabled
+		}
+		result := tx.Model(&appModel{}).
+			Where("id = ? AND last_update_time = ?", app.ID, expectedLastUpdateTime).
+			Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			return ErrNotFound
+			return ErrConflict
 		}
 		return nil
 	}))

@@ -1,6 +1,8 @@
+x-ms-sar-dashboard-image: &ms-sar-dashboard-image "${MS_SAR_DASHBOARD_IMAGE:-ms-sar-dashboard:local}"
+
 services:
   ms-sar-dashboard:
-    image: dockerhub.seobot.cc/ms/sar-dashboard:260519_10703db
+    image: *ms-sar-dashboard-image
     container_name: ms-sar-dashboard
     restart: unless-stopped
     cpus: 1.0
@@ -8,8 +10,12 @@ services:
     environment:
       MSSAR_APP_HOST: 0.0.0.0
       MSSAR_APP_PORT: "8081"
-      MSSAR_AUTH_JWT_SECRET: ms-sar-dashboard-compose-secret
-      MSSAR_DATABASE_DSN: postgres://postgres:postgres@postgres:5432/ms_sar_dashboard?sslmode=disable
+      MSSAR_SECURITY_MAX_REQUEST_BODY_BYTES: "${MSSAR_SECURITY_MAX_REQUEST_BODY_BYTES:-1048576}"
+      MSSAR_SECURITY_TRUSTED_PROXY_CIDRS: "${MSSAR_SECURITY_TRUSTED_PROXY_CIDRS:-}"
+      MSSAR_SECURITY_RATE_LIMIT_STORE_TIMEOUT: "${MSSAR_SECURITY_RATE_LIMIT_STORE_TIMEOUT:-100ms}"
+      MSSAR_AUTH_JWT_SECRET: "${MSSAR_AUTH_JWT_SECRET:?MSSAR_AUTH_JWT_SECRET is required}"
+      MSSAR_DATABASE_DSN: "${MSSAR_DATABASE_DSN:?MSSAR_DATABASE_DSN is required}"
+      MSSAR_DATABASE_MIGRATION_TIMEOUT: "${MSSAR_DATABASE_MIGRATION_TIMEOUT:-60s}"
       MSSAR_REDIS_MODE: standalone
       MSSAR_REDIS_KEY_PREFIX: ""
       MSSAR_REDIS_ADDRS: redis:6379
@@ -18,8 +24,10 @@ services:
       - -config
       - /app/configs/prod.yaml
     ports:
-      - "8588:8081"
+      - "127.0.0.1:${MSSAR_HOST_PORT:-8588}:8081"
     depends_on:
+      database-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -33,20 +41,31 @@ services:
       retries: 3
       start_period: 10s
 
+  database-migrate:
+    image: *ms-sar-dashboard-image
+    restart: "no"
+    entrypoint:
+      - /app/ms-sar-dbtool
+    command: []
+    environment:
+      MSSAR_DATABASE_DSN: "${MSSAR_DATABASE_MIGRATION_DSN:?MSSAR_DATABASE_MIGRATION_DSN is required}"
+      MSSAR_DATABASE_MIGRATION_TIMEOUT: "${MSSAR_DATABASE_MIGRATION_TIMEOUT:-60s}"
+      MSSAR_INIT_ADMIN_NAME: "${MSSAR_INIT_ADMIN_NAME:?MSSAR_INIT_ADMIN_NAME is required}"
+      MSSAR_INIT_ADMIN_PASSWORD_HASH: "${MSSAR_INIT_ADMIN_PASSWORD_HASH:?MSSAR_INIT_ADMIN_PASSWORD_HASH is required}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
-    image: dockerhub.seobot.cc/library/postgres:18.3
+    image: "${POSTGRES_IMAGE:-dockerhub.seobot.cc/library/postgres:18.3}"
     container_name: ms-sar-dashboard-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ms_sar_dashboard
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      MSSAR_INIT_ADMIN_NAME: admin
-      MSSAR_INIT_ADMIN_PASSWORD_HASH: "$$2a$$10$$iL/vKn0rR9nxI6SYsZsWg.28WnVLZlerDt60XO54vRb0c4.i3cNju"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
     volumes:
       - postgres-data:/var/lib/postgresql
-      - ./upgrade/sql:/app/upgrade/sql:ro
-      - ./admin/docker-postgres-init.sh:/docker-entrypoint-initdb.d/01-ms-sar-dashboard-init.sh:ro
     healthcheck:
       test:
         - CMD-SHELL
@@ -57,7 +76,7 @@ services:
       start_period: 10s
 
   redis:
-    image: dockerhub.seobot.cc/library/redis:8.6.1
+    image: "${REDIS_IMAGE:-dockerhub.seobot.cc/library/redis:8.6.1}"
     container_name: ms-sar-dashboard-redis
     restart: unless-stopped
     command:

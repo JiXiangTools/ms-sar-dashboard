@@ -1,5 +1,6 @@
 .git
 .gitignore
+.compose-image.env
 bin
 tmp
 logs

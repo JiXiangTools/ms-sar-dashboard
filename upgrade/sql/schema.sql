@@ -1,46 +1,39 @@
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+\set ON_ERROR_STOP on
 
+-- Compatibility bootstrap for psql-based local/E2E environments. Production
+-- deployments must use /app/ms-sar-dbtool so every version and checksum is
+-- validated before the application is started.
 BEGIN;
+SELECT pg_advisory_xact_lock(21765190250021954);
 
-DROP TABLE IF EXISTS t_admin_log;
-DROP TABLE IF EXISTS t_app;
-DROP TABLE IF EXISTS t_admin;
-DROP SEQUENCE IF EXISTS t_app_id_seq;
-
-CREATE TABLE t_admin (
-    id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(32) NOT NULL UNIQUE,
-    nickname VARCHAR(64) NOT NULL DEFAULT '',
-    password VARCHAR(255) NOT NULL DEFAULT '',
-    disabled BOOLEAN NOT NULL DEFAULT FALSE,
-    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_update_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version BIGINT PRIMARY KEY,
+    name TEXT NOT NULL,
+    checksum CHAR(64) NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE SEQUENCE t_app_id_seq START WITH 100001 INCREMENT BY 1;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM schema_migrations
+        WHERE version = 1
+          AND (name <> 'initial' OR checksum <> '29acffd1a22c56e3bdd7ebc181bdb2f972f34ebe60e797cc4a2162cd0ef83b45')
+    ) THEN
+        RAISE EXCEPTION 'migration 000001 metadata does not match this build';
+    END IF;
+END
+$$;
 
-CREATE TABLE t_app (
-    id BIGINT PRIMARY KEY DEFAULT nextval('t_app_id_seq'),
-    name VARCHAR(128) NOT NULL,
-    secret VARCHAR(255) NOT NULL,
-    remark TEXT NOT NULL DEFAULT '',
-    disabled BOOLEAN NOT NULL DEFAULT FALSE,
-    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_update_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+SELECT NOT EXISTS (
+    SELECT 1 FROM schema_migrations WHERE version = 1
+) AS migration_000001_pending \gset
 
-CREATE TABLE t_admin_log (
-    id BIGSERIAL PRIMARY KEY,
-    admin_id BIGINT NOT NULL DEFAULT 0,
-    cate VARCHAR(32) NOT NULL,
-    type VARCHAR(32) NOT NULL,
-    content JSONB NOT NULL DEFAULT '{}'::JSONB,
-    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_admin_log_cate_type_id ON t_admin_log (cate, type, id DESC);
-CREATE INDEX idx_admin_log_admin_id ON t_admin_log (admin_id, id DESC);
-CREATE INDEX idx_app_disabled_id ON t_app (disabled, id DESC);
-CREATE INDEX idx_app_name_search ON t_app USING gin (name gin_trgm_ops);
+\if :migration_000001_pending
+\ir migrations/000001_initial.sql
+INSERT INTO schema_migrations (version, name, checksum)
+VALUES (1, 'initial', '29acffd1a22c56e3bdd7ebc181bdb2f972f34ebe60e797cc4a2162cd0ef83b45');
+\endif
 
 COMMIT;

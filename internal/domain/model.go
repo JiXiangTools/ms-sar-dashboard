@@ -15,7 +15,7 @@ type Admin struct {
 type App struct {
 	ID             int64     `json:"id"`
 	Name           string    `json:"name"`
-	Secret         string    `json:"secret"`
+	Secret         string    `json:"-"`
 	Remark         string    `json:"remark"`
 	Disabled       bool      `json:"disabled"`
 	CreateTime     time.Time `json:"create_time"`

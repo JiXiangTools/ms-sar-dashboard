@@ -61,8 +61,8 @@
 
 切换顺序：
 
-1. 部署 dashboard 数据库和 Redis 配置。
-2. 初始化管理员。
+1. 使用 `ms-sar-dbtool` 执行数据库迁移并初始化管理员。
+2. 部署 dashboard 和 Redis 配置；应用启动时只校验迁移版本，不执行 DDL。
 3. 迁移 `ms-data-receiver/data/apps.json`，校验 dashboard `POST /api/v1/auth/app`。
 4. 切换 `ms-data-receiver`，保持商品/行为上报 API 和 Kafka 消息格式不变。
 5. 切换 `ms-rec-online`，appid 改为来自 `x-dwzauth-appid`，推荐 Redis key 使用 Header appid。
@@ -87,16 +87,13 @@
 
 ## 本地开发
 
-初始化 `services-deploy/base` 里的 PostgreSQL 数据库和默认管理员：
+初始化 `services-deploy/base` 里的 PostgreSQL 数据库和管理员。脚本会幂等执行版本化迁移，不会删除已有表或数据；账号密码必须显式提供，仓库不包含默认管理员凭据：
 
 ```bash
-RESET_DATABASE=true ./admin/init-local-pg.sh
+MSSAR_INIT_ADMIN_NAME='your-admin' \
+MSSAR_INIT_ADMIN_PASSWORD='replace-with-a-strong-password' \
+./admin/init-local-pg.sh
 ```
-
-初始化管理员账号密码：
-
-- 账号：`admin`
-- 密码：`dWz@240926!`
 
 应用默认为空，首次需要在 `sar-admin` 里手动新增。新增或修改应用时，Secret 会生成一串随机密文，并在提交后只展示一次，便于复制保存。
 
@@ -105,13 +102,18 @@ RESET_DATABASE=true ./admin/init-local-pg.sh
 ```bash
 MSSAR_SERVICES_DEPLOY_DIR='../services-deploy' \
 MSSAR_DATABASE_DSN='postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard?sslmode=disable' \
-RESET_DATABASE=true \
+MSSAR_INIT_ADMIN_NAME='your-admin' \
+MSSAR_INIT_ADMIN_PASSWORD='replace-with-a-strong-password' \
 ./admin/init-local-pg.sh
 ```
+
+已有同名管理员默认保持原密码和禁用状态，避免部署时意外重置凭据。受控轮换时显式增加 `MSSAR_UPDATE_ADMIN=true`；需要清理本地授权缓存时使用 `RESET_AUTH_CACHE=true ./admin/start-debug.sh`。`RESET_DATABASE` 已禁用，破坏性测试请创建单独的一次性数据库。
 
 启动本地调试服务会先确保 `services-deploy/base` 里的 PostgreSQL / Redis / Elasticsearch 就绪，再初始化缺失数据，不会预置默认应用。如果 `services-deploy/base/.env` 不存在，脚本会使用本地默认值启动中间件；Redis 默认密码为 `redis`，会自动注入到 dashboard 配置里。
 
 ```bash
+MSSAR_INIT_ADMIN_NAME='your-admin' \
+MSSAR_INIT_ADMIN_PASSWORD='replace-with-a-strong-password' \
 ./admin/start-debug.sh
 ```
 
@@ -153,11 +155,47 @@ sso:
 go test ./...
 ```
 
+设置专用测试 PostgreSQL 后，会额外运行真实迁移并发、旧库数据保留和 checksum 漂移测试：
+
+```bash
+MSSAR_MIGRATION_TEST_DSN='postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard_migration_test?sslmode=disable' \
+go test -count=1 ./internal/platform/database
+```
+
 接口冒烟示例：
 
 ```bash
-BASE_URL=http://127.0.0.1:8081 ./test/shell/curl.sh
+BASE_URL=http://127.0.0.1:8081 \
+ADMIN_NAME='your-admin' \
+ADMIN_PASSWORD='your-admin-password' \
+./test/shell/curl.sh
 ```
+
+## HTTP 安全边界
+
+所有 HTTP 请求在进入路由 handler 前都会执行统一请求体限制，默认上限为 `1048576` 字节（1 MiB）。无论请求是否携带 `Content-Length`、是否使用 chunked 传输，超限都返回统一 JSON `413 request body too large`。可通过 `MSSAR_SECURITY_MAX_REQUEST_BODY_BYTES` 覆盖；该值必须为正数。
+
+客户端 IP 默认只取 TCP socket peer，并进行 IPv4/IPv6 canonical 化；未经信任的 peer 提供的 `X-Forwarded-For` 一律忽略。只有部署在反向代理后时，才应通过逗号分隔的 `MSSAR_SECURITY_TRUSTED_PROXY_CIDRS` 配置实际代理网段，例如 `10.20.0.0/24,2001:db8:10::/64`。配置应尽可能收窄，不能把任意客户端可能直连的网段加入信任列表。解析时从 socket peer 沿 `X-Forwarded-For` 右侧向左回溯，限流和脱敏访问日志使用同一个 canonical client IP。
+
+本仓与 `ms-data-receiver`、`ms-search-online`、`ms-rec-online` 联合生产部署时，该变量是上线必配项：必须精确包含这三类 online 实例/Pod 的来源网段。否则 Dashboard 会忽略 online 转发的终端 IP，多个终端会共享 online 实例的 app-auth 限流桶；部署检查应据此阻塞发布。
+
+安全限流使用 Redis Lua 原子共享固定窗口，因此多个 dashboard 实例共享同一计数。Redis 调用默认最多等待 `100ms`，可通过 `MSSAR_SECURITY_RATE_LIMIT_STORE_TIMEOUT` 调整。每个实例同时维护有界的本机影子窗口；Redis 出错或超时时按本机窗口继续限流，不返回依赖故障 `5xx`，也不会无限放行。降级期间额度按实例计算，因此应同时告警 Redis 故障并尽快恢复共享计数。
+
+密码登录使用两层额度：每个 canonical 来源 IP `100/min`，每个规范化账号 SHA-256 身份 `10/min`。账号、密码和应用 secret 均不会进入 Redis key、错误详情或日志；账号维度避免同一 NAT 下所有管理员共享原来的小额度。
+
+## Prometheus 指标
+
+服务公开无需鉴权的 `GET /metrics`，返回 Prometheus/OpenMetrics 文本。该入口用于集群内抓取，生产环境应通过网络策略或反向代理限制到监控系统，不应直接暴露到公网。
+
+当前指标包括：
+
+- `ms_sar_dashboard_http_requests_total` 和 `ms_sar_dashboard_http_request_duration_seconds`：仅使用 Gin 固定路由模板、HTTP method 和状态码标签。
+- `ms_sar_dashboard_client_auth_total`：应用授权结果。
+- `ms_sar_dashboard_admin_auth_total`：登录、SSO 登录和 access token 校验结果。
+- `ms_sar_dashboard_authorization_projection_reconcile_total`：启动及管理员手动授权投影 reconcile 结果。
+- `ms_sar_dashboard_startup_checks_total`：数据库 migration verify 结果；启动失败时进程不会提供可抓取端点，应结合启动日志和容器重启告警排查。
+
+指标禁止使用 appid、admin id、request id、原始 URL path、query 或任何认证材料作为 label。未匹配路由统一标为 `unmatched`。
 
 data-receiver 测试数据上报脚本：
 
@@ -181,9 +219,9 @@ python3 ./test/test-action-upload.py
 ## 容器与打包
 
 - `Dockerfile`：运行镜像构建
-- `docker-compose.yml`：本地 compose 编排，包含服务、PostgreSQL 和 Redis
+- `docker-compose.yml`：本地 compose 编排，包含一次性迁移任务、服务、PostgreSQL 和 Redis
 - `admin/build-image.sh`：镜像打包
-- `admin/docker-postgres-init.sh`：compose 内 PostgreSQL 初始化脚本
+- `admin/docker-postgres-init.sh`：仅供旧的 PostgreSQL initdb/测试环境兼容引导；正式升级使用 `ms-sar-dbtool`
 
 构建镜像：
 
@@ -191,13 +229,24 @@ python3 ./test/test-action-upload.py
 ./admin/build-image.sh
 ```
 
-脚本默认生成 `dockerhub.seobot.cc/ms/sar-dashboard:{date}_{commit}`，并在构建成功后同步更新 `docker-compose.yml` 中的服务镜像。
+脚本默认生成 `dockerhub.seobot.cc/ms/sar-dashboard:{date}_{commit}`，并把同一镜像名原子写入被 Git 忽略的 `.compose-image.env`；不会修改 tracked `docker-compose.yml`。Dashboard 与 migration job 通过同一 Compose anchor 读取该变量，避免镜像漂移。
 
 启动本地 compose：
 
 ```bash
-docker compose -f docker-compose.yml up -d
+export POSTGRES_PASSWORD='replace-with-a-strong-database-password'
+export MSSAR_DATABASE_DSN='postgres://postgres:URL_ENCODED_PASSWORD@postgres:5432/ms_sar_dashboard?sslmode=disable'
+export MSSAR_DATABASE_MIGRATION_DSN="${MSSAR_DATABASE_DSN}"
+export MSSAR_AUTH_JWT_SECRET='replace-with-at-least-32-random-characters'
+export MSSAR_SECURITY_MAX_REQUEST_BODY_BYTES='1048576'
+# 仅部署在受控反向代理后时设置，例如：
+# export MSSAR_SECURITY_TRUSTED_PROXY_CIDRS='10.20.0.0/24'
+export MSSAR_INIT_ADMIN_NAME='your-admin'
+export MSSAR_INIT_ADMIN_PASSWORD_HASH="$(go run ./cmd/hash-password -password 'replace-with-a-strong-admin-password')"
+docker compose --env-file .compose-image.env -f docker-compose.yml up -d
 ```
+
+以上变量均为必填，且执行 Compose 前必须先构建镜像或显式设置 `MS_SAR_DASHBOARD_IMAGE`；默认占位镜像 `ms-sar-dashboard:local` 不会静默回退到旧发布版本。示例为方便本地运行让两个 DSN 使用同一账号；生产环境建议给 `MSSAR_DATABASE_MIGRATION_DSN` 配置短生命周期 DDL 账号，给 `MSSAR_DATABASE_DSN` 配置仅有业务 DML、序列使用和迁移表只读权限的运行账号。Secret 应由受控管理系统或不入库的 `.env` 文件注入；JWT Secret 轮换会使现有管理端会话失效。`database-migrate` 会先取得 PostgreSQL advisory lock，按版本执行迁移并初始化缺失的管理员；只有它成功退出后 dashboard 才启动。已有同名管理员不会在每次部署时被覆盖。
 
 compose 默认暴露：
 
@@ -206,9 +255,31 @@ compose 默认暴露：
 - PostgreSQL 数据库：`ms_sar_dashboard`
 - Redis DB：`8`
 
+## 数据库迁移
+
+迁移文件位于 `upgrade/sql/migrations/`，命名为六位递增版本号加名称，例如 `000001_initial.sql`。已发布的文件不可修改；任何结构变化都新增更高版本。迁移器把版本、名称、SHA-256 checksum 和执行时间写入 `schema_migrations`。
+
+迁移保证：
+
+- 使用固定 PostgreSQL advisory lock 串行化多个同时启动的迁移任务。
+- 每个迁移 SQL 与对应版本记录在同一事务提交，失败时不留下半完成版本。
+- 已执行版本会校验名称和 checksum；数据库含未知新版本、缺失中间版本或文件被修改时立即失败。
+- 初始迁移可接管旧版 `schema.sql` 创建的同结构数据库，使用 `IF NOT EXISTS` 并保留已有管理员、应用、审计记录和 appid 序列。
+- dashboard 运行进程只取得共享锁并校验版本，不自行执行 DDL；迁移账号和运行账号可以按最小权限拆分。
+
+非 Compose 部署应在发布应用前显式执行：
+
+```bash
+MSSAR_DATABASE_DSN='postgres://migration-user:password@postgres:5432/ms_sar_dashboard?sslmode=verify-full' \
+/app/ms-sar-dbtool -timeout 60s
+```
+
+需要首次初始化管理员时同时设置 `MSSAR_INIT_ADMIN_NAME` 和 `MSSAR_INIT_ADMIN_PASSWORD_HASH`。已有账号默认保持不变；只有人工确认的密码轮换才使用 `-update-admin`。迁移采用只前进策略：失败版本修正后重新执行，已发布版本有问题时新增修复版本，不通过回滚 SQL 删除已有数据。
+
 ## 目录结构
 
 - `cmd/ms-sar-dashboard`：服务启动入口
+- `cmd/ms-sar-dbtool`：显式数据库迁移和初始管理员工具
 - `cmd/hash-password`：bcrypt 密码哈希生成工具
 - `admin/`：本地初始化、调试启动和镜像构建脚本
 - `configs/`：环境配置
@@ -217,5 +288,6 @@ compose 默认暴露：
 - `internal/http`：路由、handler、middleware、UI
 - `internal/service`：核心业务逻辑
 - `internal/repository`：数据库访问
-- `upgrade/sql/`：表结构与初始化 SQL
+- `upgrade/sql/migrations/`：不可变的版本化数据库迁移
+- `upgrade/sql/schema.sql`：psql 本地/E2E 兼容引导入口
 - `test/`：契约、配置和冒烟测试

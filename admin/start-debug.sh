@@ -14,7 +14,7 @@ REDIS_CONTAINER="${MSSAR_REDIS_CONTAINER:-services-deploy-redis}"
 ELASTICSEARCH_CONTAINER="${MSSAR_ELASTICSEARCH_CONTAINER:-services-deploy-elasticsearch}"
 DATABASE_NAME="${MSSAR_DATABASE_NAME:-ms_sar_dashboard}"
 REDIS_DB="${MSSAR_REDIS_DB:-8}"
-RESET_DATABASE="${RESET_DATABASE:-false}"
+RESET_AUTH_CACHE="${RESET_AUTH_CACHE:-false}"
 
 . "${SCRIPT_DIR}/services-deploy-env.sh"
 resolve_services_deploy_env
@@ -121,11 +121,17 @@ wait_for_elasticsearch() {
 }
 
 clear_app_auth_cache() {
-  if [ "${RESET_DATABASE}" != "true" ]; then
+  if [ "${RESET_AUTH_CACHE}" != "true" ]; then
     return 0
   fi
 
-  keys="$(redis_cli -n "${REDIS_DB}" --raw KEYS 'app_auth_*' | tr -d '\r')"
+	key_prefix="${MSSAR_REDIS_KEY_PREFIX:-}"
+	case "${key_prefix}" in
+	  "") key_pattern='app_auth_*' ;;
+	  *:|*_) key_pattern="${key_prefix}app_auth_*" ;;
+	  *) key_pattern="${key_prefix}:app_auth_*" ;;
+	esac
+	keys="$(redis_cli -n "${REDIS_DB}" --raw KEYS "${key_pattern}" | tr -d '\r')"
   if [ -z "${keys}" ]; then
     return 0
   fi
@@ -151,9 +157,9 @@ export MSSAR_REDIS_DB="${MSSAR_REDIS_DB:-${REDIS_DB}}"
 if [ -z "${MSSAR_REDIS_PASSWORD+x}" ]; then
   export MSSAR_REDIS_PASSWORD="${REDIS_EFFECTIVE_PASSWORD}"
 fi
-export MSSAR_INIT_ADMIN_NAME="${MSSAR_INIT_ADMIN_NAME:-admin}"
-export MSSAR_INIT_ADMIN_PASSWORD="${MSSAR_INIT_ADMIN_PASSWORD:-dWz@240926!}"
-export RESET_DATABASE
+: "${MSSAR_INIT_ADMIN_NAME:?MSSAR_INIT_ADMIN_NAME is required}"
+: "${MSSAR_INIT_ADMIN_PASSWORD:?MSSAR_INIT_ADMIN_PASSWORD is required}"
+export MSSAR_INIT_ADMIN_NAME MSSAR_INIT_ADMIN_PASSWORD
 
 "${SCRIPT_DIR}/init-local-pg.sh"
 clear_app_auth_cache

@@ -182,12 +182,19 @@ app:
   env: dev
   host: 0.0.0.0
   port: 8081
+  read_header_timeout: 3s
   read_timeout: 5s
   write_timeout: 10s
+  idle_timeout: 60s
   shutdown_timeout: 10s
 
+security:
+  max_request_body_bytes: 1048576
+  trusted_proxy_cidrs: []
+  rate_limit_store_timeout: 100ms
+
 auth:
-  jwt_secret: ms-sar-dashboard-dev-secret
+  jwt_secret: ${MSSAR_AUTH_JWT_SECRET}
   access_token_ttl: 2h
   issuer: ms-sar-dashboard
 
@@ -206,6 +213,7 @@ database:
   max_idle_conns: 5
   conn_max_lifetime: 30m
   health_check_timeout: 2s
+  migration_timeout: 60s
 
 redis:
   mode: standalone
@@ -243,6 +251,9 @@ recommend_debug:
 - SSO 登录成功会同步 `t_admin`；如果同名管理员已被禁用，登录后不会绕过本地禁用状态。
 - dashboard 使用 Redis 同步应用授权；推荐 Debug 从授权投影读取 Secret 后调用 `ms-rec-online`。
 - `recommend_debug.online_base_url` 指向推荐在线服务，默认匹配 `services-deploy/search-rec-ad` 的本地端口。
+- `security.max_request_body_bytes` 是进入所有 handler 前的全局请求体上限，`Content-Length` 和 chunked 请求使用同一限制并统一返回 `413`。
+- `security.trusted_proxy_cidrs` 默认为空；只有 socket peer 命中可信 CIDR 时才解析 `X-Forwarded-For`，限流和日志共用解析后的 canonical IP。
+- `security.rate_limit_store_timeout` 限制共享 Redis 计数延迟；Redis 异常时使用每实例有界影子窗口继续限制请求，不把依赖故障扩大成全站 `5xx`。
 
 ## 6. 数据模型
 
@@ -312,6 +323,25 @@ recommend_debug:
 | `REC_DEBUG` | `VIEW` | 推荐 debug |
 
 日志不得记录 password、secret、token、ES 密码、Redis 密码。
+
+### 6.4 schema_migrations
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `version` | BIGINT | 单调递增的迁移版本，主键 |
+| `name` | TEXT | 迁移文件名中的稳定名称 |
+| `checksum` | CHAR(64) | SQL 文件的 SHA-256，用于检测历史文件漂移 |
+| `applied_at` | TIMESTAMPTZ | 事务提交时的执行时间 |
+
+数据库升级约束：
+
+1. `upgrade/sql/migrations/` 是唯一结构变更来源，已发布迁移不可编辑，只能追加新版本。
+2. 发布前由一次性 `ms-sar-dbtool` 任务执行迁移；运行中的 dashboard 只校验所有内置版本均已应用。
+3. 迁移任务使用固定 PostgreSQL advisory lock，因此多个实例并发发布时也只会执行一次。
+4. 每个迁移和版本记录使用同一事务；checksum 不一致、版本断层或数据库版本高于当前二进制时拒绝启动。
+5. 迁移只前进且不删除已有业务数据。回滚应用镜像前必须确认旧二进制认识当前数据库版本；结构修复通过追加新迁移完成。
+6. 初始管理员 seed 与 schema 迁移分离；重复部署默认不覆盖已存在账号，密码轮换必须显式执行 `-update-admin`。
+7. Dashboard 与一次性迁移任务必须使用同一 `MS_SAR_DASHBOARD_IMAGE`；本地构建只更新 ignored compose env，避免旧镜像缺少当前迁移工具或两个进程版本漂移。
 
 ## 7. Redis 授权投影
 
@@ -591,7 +621,15 @@ UI 规则：
 - Debug 页面必须明确当前 appid。
 - Debug 页面只读，不出现写入、删除、重建索引或修改 Redis 的按钮。
 
-## 13. 安全约束
+## 13. 可观测性
+
+- `GET /metrics` 无应用层鉴权，供 Prometheus 在受控网络内抓取，公网隔离由部署网络策略负责。
+- HTTP 请求量和耗时仅按 Gin 固定路由模板、method、状态码聚合；404 等未匹配路径统一为 `unmatched`。
+- 应用授权、管理员登录/SSO/access token、授权投影 reconcile 和 migration verify 只使用固定 operation/outcome 枚举。
+- 指标 label 不得包含 appid、admin id、request id、原始 path/query、用户名或认证材料，避免敏感信息泄露和时序基数失控。
+- migration verify 失败发生在 HTTP server 启动前，指标无法被抓取，因此必须同时保留启动错误日志和容器重启告警。
+
+## 14. 安全约束
 
 - 管理员密码必须 bcrypt hash。
 - 生产环境 JWT secret 必须由环境注入。
@@ -603,8 +641,13 @@ UI 规则：
 - dashboard 明确授权失败时不得放行；授权接口异常时在线服务只能按各自文档化的本地成功授权缓存策略处理。
 - ES Debug 只允许只读操作。
 - 推荐 Debug 只允许调用推荐查询接口，不提供 Redis key 直查、写入或删除能力。
+- 生产迁移账号持有必要 DDL 权限；dashboard 运行账号只需业务表 DML、`schema_migrations` 只读和 advisory lock 调用权限。
+- 所有请求体在 handler 前限制为配置上限；不能只依赖可伪造或缺失的 `Content-Length`。
+- 未可信 socket peer 的 `X-Forwarded-For` 必须忽略；可信代理 CIDR 必须由部署显式配置并保持最小范围。
+- 安全限流通过 Redis Lua 原子计数跨实例共享；Redis 失败时回退到本机影子窗口，定义为“每实例继续限流、请求不因限流存储失败返回 5xx、不得无限放行”。
+- 密码登录同时限制来源 IP 和账号哈希；Redis key、指标、日志和错误详情不得包含账号、密码、token 或应用 secret 明文。
 
-## 14. 验收标准
+## 15. 验收标准
 
 - dashboard 可账号密码登录。
 - 登录成功和失败都有审计日志。
@@ -617,3 +660,4 @@ UI 规则：
 - ES Debug 可查看索引、mapping、settings、count、单文档，并执行受控只读查询。
 - 推荐 Debug 可调用 hot、related、personalized 三类推荐接口并展示返回结果。
 - 管理端写操作和 debug 操作都有审计日志。
+- `/metrics` 可匿名抓取，且动态 path、query、身份标识和认证材料不会进入 label。

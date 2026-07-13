@@ -37,11 +37,14 @@ Authorization: Bearer <access_token>
 }
 ```
 
+所有请求体默认最多 `1048576` 字节，包含 `Content-Length` 和 chunked 请求；超限统一返回 HTTP/业务状态 `413`、message `request body too large`。安全敏感入口超过限流额度返回 `429` 并携带秒数格式的 `Retry-After`。
+
 ## 2. 接口列表
 
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
 | `GET` | `/health` | 否 | 健康检查 |
+| `GET` | `/metrics` | 否 | Prometheus/OpenMetrics 指标 |
 | `POST` | `/api/v1/admin/auth/login` | 否 | 登录 |
 | `GET` | `/api/v1/admin/auth/sso` | 否 | 获取单点登录入口 |
 | `POST` | `/api/v1/admin/auth/sso/login` | 否 | 使用 CAS token 完成单点登录 |
@@ -95,6 +98,7 @@ POST /api/v1/admin/auth/login
 - 登录失败写 `t_admin_log`：`cate=AUTH`，`type=LOGIN_FAILED`。
 - 日志不得记录密码和 token。
 - 登录失败对外统一返回 `invalid admin credentials`。
+- 登录限流按 canonical 来源 IP `100/min` 和规范化账号哈希 `10/min` 双层执行；同一 NAT 下不同账号不共享账号小窗口，账号和密码不会写入限流 key 或日志。
 
 ### 3.1 单点登录入口
 
@@ -158,6 +162,17 @@ Content-Type: application/json
 - 后续管理端鉴权统一查询 `t_admin` 并校验 `disabled` 和 `last_update_time`，不再直接信任用户中心返回值或 JWT claims 作为管理员事实源。
 - 单点登录成功和失败同样写 `t_admin_log` 的 `LOGIN_SUCCESS` / `LOGIN_FAILED`。
 
+### 3.3 退出登录
+
+```http
+POST /api/v1/admin/auth/logout
+Authorization: Bearer <access_token>
+```
+
+- 服务端按 JWT `jti` 写入带过期时间的 Redis 撤销记录；同一个 JWT 后续请求立即失效。
+- Redis 不可用时返回 `503`，不会假装登出成功。
+- 成功退出写 `t_admin_log`：`cate=AUTH`，`type=LOGOUT`。
+
 ## 4. 应用列表
 
 ```http
@@ -184,7 +199,7 @@ Query：
       {
         "id": 100001,
         "name": "mall-app",
-        "secret": "secret-1",
+		"secret_configured": true,
         "remark": "商城应用",
         "disabled": false,
         "create_time": "2026-05-19T09:00:00+08:00",
@@ -202,9 +217,9 @@ Query：
 说明：
 
 - `id` 对应 `x-dwzauth-appid`。
-- `secret` 对应 `x-dwzauth-secret`。
+- 列表只返回 `secret_configured`，不返回应用密钥明文。
 - 默认只返回 `disabled=false` 的应用。
-- UI 默认脱敏展示 secret。
+- Secret 仅在创建响应或显式轮换 Secret 的修改响应中展示一次。
 
 ## 5. 创建应用
 
@@ -226,6 +241,7 @@ POST /api/v1/admin/app
 - 将所有有效应用重新刷到 Redis，覆盖各自的 `app_auth_{appid}`，并同步 `app_auth_allappids`。
 - 写审计日志：`cate=APP`，`type=CREATE`。
 - Redis 同步失败时创建失败。
+- 创建成功响应包含本次 Secret；后续列表不会再次返回。
 
 ## 6. 修改应用
 
@@ -248,6 +264,7 @@ PUT /api/v1/admin/app/{app_id}
 - 将所有有效应用重新刷到 Redis，覆盖各自的 `app_auth_{appid}`，并同步 `app_auth_allappids`。
 - 写审计日志：`cate=APP`，`type=UPDATE`。
 - Redis 同步失败时修改失败。
+- 仅当请求包含 `secret`（轮换）时，响应包含新 Secret；普通资料更新不返回 Secret。
 
 ## 7. 删除应用
 
@@ -262,6 +279,18 @@ DELETE /api/v1/admin/app/{app_id}
 - 刷新 Redis `app_auth_allappids`。
 - 写审计日志：`cate=APP`，`type=DELETE`。
 - Redis 删除失败时删除失败。
+
+## 7.1 重建应用授权投影
+
+```http
+POST /api/v1/admin/app/reconcile
+Authorization: Bearer <access_token>
+```
+
+- 从 PostgreSQL 读取全部有效应用，幂等重建 Redis `app_auth_{appid}` 与 `app_auth_allappids`。
+- 单机和 Sentinel 使用 Redis 事务 pipeline；Cluster 使用普通 pipeline，并可重复调用完成对账。
+- 操作写审计日志：`cate=APP`，`type=RECONCILE_AUTHORIZATION`。
+- Redis 或数据库不可用时返回 `503`。
 
 ## 8. 在线服务统一授权
 
@@ -321,7 +350,7 @@ GET /api/v1/auth/app
 - 不要求管理端 JWT。
 - `data` 只返回当前有效应用，因此 `disabled` 固定为 `false`。
 - 缓存命中时直接返回 `app_auth_allappids`。
-- 缓存未命中时查询数据库中的有效应用，并回写 `app_auth_allappids`。
+- 缓存未命中时从数据库全量重建 `app_auth_{appid}` 和 `app_auth_allappids`。
 - Redis 读取或写入异常时返回失败，不降级绕过错误。
 
 ### 8.2 应用授权校验 API
@@ -376,8 +405,8 @@ Content-Type: application/json
 - 调用方只根据 JSON `status` 判断结果：`status=200` 为成功，其他值为失败。
 - 校验逻辑读取 dashboard 内部应用授权投影 `app_auth_{appid}`。
 - `appid` 为空、非正整数，或 `secret` 为空时返回失败；字符串形式 appid 必须使用规范十进制正整数。
-- appid 不存在、应用已禁用、secret 不匹配时返回失败。
-- 授权投影不可用或读取异常时返回失败，不允许降级为通过。
+- appid 不存在、应用已禁用、secret 不匹配返回 `401`；Redis/数据库等授权基础设施异常返回 `503`。
+- 授权投影不可用或读取异常时不允许降级为通过。
 - 失败场景包含 appid 不存在、secret 不存在、`appid + secret` 不匹配等业务错误；对外统一返回 `invalid app authorization`。
 - 不写 `t_admin_log`，只走访问日志和错误日志；日志中不得记录 secret 明文。
 - 该接口只做授权校验，不返回应用 secret、名称、备注等管理信息。
@@ -497,3 +526,15 @@ POST /api/v1/admin/debug/rec
 - 不提供直接输入 Redis key 的调试入口。
 - 不写候选结果。
 - 推荐排序、召回和兜底逻辑以 `ms-rec-online` 当前接口为准。
+
+## 12. Prometheus 指标
+
+```http
+GET /metrics
+```
+
+- 无需 JWT 或应用授权，响应为 Prometheus/OpenMetrics 文本，不使用统一 JSON envelope。
+- 仅供受控监控网络抓取；部署层应限制公网访问。
+- HTTP 指标 label 仅包含 Gin 固定路由模板、method 和状态码；未匹配路由固定使用 `unmatched`。
+- 鉴权、投影 reconcile 和启动检查仅使用固定 operation/outcome 枚举。
+- 禁止把 appid、admin id、request id、原始 path/query、token、secret、password 等写入 label 或指标值。

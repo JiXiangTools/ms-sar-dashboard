@@ -1,6 +1,9 @@
 name: Docker Image
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -8,9 +11,46 @@ env:
   IMAGE_REPOSITORY: dockerhub.seobot.cc/ms/sar-dashboard
 
 jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: ms_sar_dashboard_migration_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ms_sar_dashboard_migration_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MSSAR_MIGRATION_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard_migration_test?sslmode=disable
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Race test
+        run: go test -race -count=1 ./...
+      - name: Vet
+        run: go vet ./...
+
   build-and-push:
     name: Build and push image
     runs-on: ubuntu-latest
+    needs: [verify]
+    if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
     steps:

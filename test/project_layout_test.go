@@ -8,12 +8,15 @@ import (
 func TestProjectLayoutMatchesMsUserCenterConvention(t *testing.T) {
 	requiredFiles := []string{
 		".dockerignore",
+		".gitignore",
 		"Dockerfile",
 		"docker-compose.yml",
 		"admin/build-image.sh",
 		"admin/start-debug.sh",
 		"admin/init-local-pg.sh",
 		"admin/docker-postgres-init.sh",
+		"cmd/ms-sar-dbtool/main.go",
+		"upgrade/sql/migrations/000001_initial.sql",
 		"test/shell/curl.sh",
 	}
 

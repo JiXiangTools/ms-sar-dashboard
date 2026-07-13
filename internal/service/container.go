@@ -42,9 +42,11 @@ func NewContainer(cfg config.Config, dbClient *database.Client, cacheClient *pla
 	container := &Container{
 		Repo:  repo,
 		Audit: auditService,
-		Auth:  NewAdminAuthService(repo, tokenService, auditService, logger),
+		Auth: NewAdminAuthService(repo, tokenService, auditService, logger, AdminAuthSettings{
+			Redis: redisClient, KeyPrefix: cfg.Redis.KeyPrefix,
+		}),
 		SSO:   NewAdminSSOService(cfg.SSO, repo, tokenService, auditService, logger),
-		Apps:  NewAppService(repo, redisClient, auditService, logger),
+		Apps:  NewAppService(repo, redisClient, auditService, logger, cfg.Redis.KeyPrefix, cfg.Redis.Mode),
 		Logs:  NewLogService(repo),
 		Debug: NewDebugService(cfg, redisClient, esClient, auditService, logger),
 	}

@@ -5,8 +5,4 @@ VALUES (
     :'admin_password_hash',
     FALSE
 )
-ON CONFLICT (name) DO UPDATE SET
-    nickname = EXCLUDED.nickname,
-    password = EXCLUDED.password,
-    disabled = FALSE,
-    last_update_time = NOW();
+ON CONFLICT (name) DO NOTHING;

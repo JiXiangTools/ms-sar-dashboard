@@ -27,6 +27,17 @@ func appAuthAllAppIDsKey() string {
 	return "app_auth_allappids"
 }
 
+func redisKey(prefix string, key string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return key
+	}
+	if strings.HasSuffix(prefix, ":") || strings.HasSuffix(prefix, "_") {
+		return prefix + key
+	}
+	return prefix + ":" + key
+}
+
 func normalizeOptionalString(value *string) *string {
 	if value == nil {
 		return nil

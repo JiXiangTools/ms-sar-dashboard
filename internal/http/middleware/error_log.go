@@ -31,11 +31,11 @@ func ErrorLog(logger *log.Logger) gin.HandlerFunc {
 		fields := []logx.Field{
 			logx.String("method", c.Request.Method),
 			logx.String("path", c.Request.URL.Path),
-			logx.String("query", c.Request.URL.RawQuery),
+			logx.String("query", redactQuery(c.Request.URL.RawQuery)),
 			logx.Int("status", errorResponse.Status),
 			logx.Int("business_status", errorResponse.BusinessStatus),
 			logx.String("message", errorResponse.Message),
-			logx.String("client_ip", c.ClientIP()),
+			logx.String("client_ip_masked", maskIP(ClientIP(c))),
 		}
 		fields = appendErrorResponseLogFields(c, fields)
 		level(logger, c.Request.Context(), requestStartedAt, "http.response_error", "error response",

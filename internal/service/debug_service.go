@@ -164,7 +164,15 @@ func (s *DebugService) recordDebugAudit(ctx context.Context, adminID int64, cate
 	if err != nil {
 		content["error"] = err.Error()
 	}
-	_ = s.audit.Record(ctx, adminID, cate, typ, content)
+	if s.audit == nil {
+		return
+	}
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if auditErr := s.audit.Record(auditCtx, adminID, cate, typ, content); auditErr != nil {
+		logx.Error(s.logger, auditCtx, time.Now(), "audit.record.failed", "debug audit record failed",
+			logx.Int64("admin_id", adminID), logx.String("category", cate), logx.String("action", typ), logx.Err(auditErr))
+	}
 }
 
 func (s *DebugService) logDebugInfo(ctx context.Context, startedAt time.Time, event string, message string, fields ...logx.Field) {
@@ -267,12 +275,10 @@ func (s *DebugService) Recommend(ctx context.Context, adminID int64, req RecDebu
 
 	result, err := s.callRecommendOnline(ctx, targetURL, secret, req.AppID)
 	if err != nil {
-		_ = s.audit.Record(ctx, adminID, "REC_DEBUG", "VIEW", map[string]any{
+		s.recordDebugAudit(ctx, adminID, "REC_DEBUG", "VIEW", err, map[string]any{
 			"appid":    req.AppID,
 			"type":     strings.ToLower(strings.TrimSpace(req.Type)),
 			"endpoint": endpoint,
-			"success":  false,
-			"error":    err.Error(),
 		})
 		return RecDebugResult{}, err
 	}
@@ -280,12 +286,11 @@ func (s *DebugService) Recommend(ctx context.Context, adminID int64, req RecDebu
 	result.AppID = req.AppID
 	result.Endpoint = endpoint
 	result.Params = params
-	_ = s.audit.Record(ctx, adminID, "REC_DEBUG", "VIEW", map[string]any{
+	s.recordDebugAudit(ctx, adminID, "REC_DEBUG", "VIEW", nil, map[string]any{
 		"appid":       req.AppID,
 		"type":        result.Type,
 		"endpoint":    endpoint,
 		"final_count": result.Size,
-		"success":     true,
 	})
 	logx.Info(s.logger, ctx, startedAt, "rec_debug.view", "recommend debug",
 		logx.Int64("admin_id", adminID),
@@ -363,7 +368,7 @@ func (s *DebugService) recommendAppSecret(ctx context.Context, rawAppID string) 
 		return "", apperror.BadRequest("invalid appid", nil)
 	}
 
-	values, err := s.redis.HGetAll(ctx, appAuthKey(appID)).Result()
+	values, err := s.redis.HGetAll(ctx, redisKey(s.cfg.Redis.KeyPrefix, appAuthKey(appID))).Result()
 	if err != nil {
 		return "", apperror.Internal("read app authorization failed", err)
 	}

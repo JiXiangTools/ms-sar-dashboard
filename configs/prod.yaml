@@ -3,9 +3,16 @@ app:
   env: prod
   host: 0.0.0.0
   port: 8081
+  read_header_timeout: 3s
   read_timeout: 5s
   write_timeout: 10s
+  idle_timeout: 60s
   shutdown_timeout: 15s
+
+security:
+  max_request_body_bytes: 1048576
+  trusted_proxy_cidrs: []
+  rate_limit_store_timeout: 100ms
 
 auth:
   jwt_secret: ""
@@ -30,6 +37,7 @@ database:
   max_idle_conns: 10
   conn_max_lifetime: 30m
   health_check_timeout: 2s
+  migration_timeout: 60s
 
 redis:
   mode: standalone
