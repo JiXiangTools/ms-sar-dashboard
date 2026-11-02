@@ -34,6 +34,7 @@ func Register(engine *gin.Engine) {
 }
 
 func noStore(c *gin.Context) {
+	c.Header("X-Robots-Tag", "noindex, nofollow")
 	c.Header("Cache-Control", "no-store")
 	c.Header("Pragma", "no-cache")
 	c.Header("Expires", "0")

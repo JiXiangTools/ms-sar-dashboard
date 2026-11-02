@@ -661,3 +661,7 @@ UI 规则：
 - 推荐 Debug 可调用 hot、related、personalized 三类推荐接口并展示返回结果。
 - 管理端写操作和 debug 操作都有审计日志。
 - `/metrics` 可匿名抓取，且动态 path、query、身份标识和认证材料不会进入 label。
+
+## 应用统计扩展
+
+统计计算归属 alg-rec-offline 的 rec-statistics；Dashboard 接收版本化的每日汇总快照，存于 t_app_statistics_day 与 t_app_statistics_snapshot，不存储原始商品/行为。接口、CTR/浏览/TIP 口径、重试与迟到回算及部署说明见 [statistics.md](statistics.md)。

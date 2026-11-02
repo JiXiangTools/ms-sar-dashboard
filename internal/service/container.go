@@ -17,13 +17,14 @@ import (
 )
 
 type Container struct {
-	Repo  *repository.Repository
-	Audit *audit.Service
-	Auth  *AdminAuthService
-	SSO   *AdminSSOService
-	Apps  *AppService
-	Logs  *LogService
-	Debug *DebugService
+	Repo       *repository.Repository
+	Audit      *audit.Service
+	Auth       *AdminAuthService
+	SSO        *AdminSSOService
+	Apps       *AppService
+	Logs       *LogService
+	Debug      *DebugService
+	Statistics *StatisticsService
 }
 
 func NewContainer(cfg config.Config, dbClient *database.Client, cacheClient *platformcache.Client, esClient *elasticsearch.Client, logger *log.Logger) (*Container, error) {
@@ -40,8 +41,9 @@ func NewContainer(cfg config.Config, dbClient *database.Client, cacheClient *pla
 	tokenService := auth.NewService(cfg.Auth)
 
 	container := &Container{
-		Repo:  repo,
-		Audit: auditService,
+		Repo:       repo,
+		Statistics: NewStatisticsService(repo),
+		Audit:      auditService,
 		Auth: NewAdminAuthService(repo, tokenService, auditService, logger, AdminAuthSettings{
 			Redis: redisClient, KeyPrefix: cfg.Redis.KeyPrefix,
 		}),

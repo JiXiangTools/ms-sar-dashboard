@@ -13,6 +13,8 @@ import (
 const namespace = "ms_sar_dashboard"
 
 var knownRouteTemplates = map[string]struct{}{
+	"/api/v1/admin/statistics":                           {},
+	"/api/v1/internal/statistics/apps/:appid/days/:date": {},
 	"/health":                                    {},
 	"/metrics":                                   {},
 	"/sar-admin":                                 {},

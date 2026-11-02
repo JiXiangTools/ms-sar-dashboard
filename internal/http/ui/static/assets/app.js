@@ -2,6 +2,7 @@ const storageKey = "mssar.admin.session";
 const pageSize = 10;
 
 const viewConfigs = {
+  statistics: { kicker: "数据统计", title: "数据统计", actions: ["refresh"] },
   apps: {
     kicker: "应用授权",
     title: "应用授权",
@@ -167,6 +168,7 @@ function restoreSession() {
 }
 
 function clearSession() {
+  statisticsReset();
   state.accessToken = "";
   state.adminID = 0;
   state.adminName = "";
@@ -410,6 +412,7 @@ function getQueryString(view) {
 }
 
 async function loadActiveView(force = false) {
+  if (state.activeView === "statistics") { await loadStatistics(force); return; }
   const config = viewConfigs[state.activeView];
   if (!hasSession() || !config.endpoint) {
     return;
@@ -595,6 +598,7 @@ function renderSecretRevealPanel() {
 }
 
 function renderFilters() {
+  if (state.activeView === "statistics" && hasSession()) { renderStatisticsFilters(); return; }
   const config = viewConfigs[state.activeView];
   if (!hasSession() || !config.filters?.length) {
     filterBar.innerHTML = "";
@@ -669,6 +673,7 @@ function renderTable() {
     pagination.innerHTML = "";
     return;
   }
+  if (state.activeView === "statistics") { renderStatistics(); return; }
   if (state.activeView === "apps") {
     renderAppsTable();
     return;
@@ -1233,6 +1238,16 @@ function bindAuthEvents() {
 }
 
 function bindWorkspaceEvents() {
+  filterBar.addEventListener("click", event => {
+    const button = event.target.closest("button[data-stat-days]");
+    if (!button) return;
+    const form = document.getElementById("statistics-filter");
+    statisticsState.filters = { ...readFormData(form), from: statisticsDate(1 - Number(button.dataset.statDays)), to: statisticsDate() };
+    loadStatistics(true);
+  });
+  panelContent.addEventListener("change", event => {
+    if (event.target.id === "statistics-event") { statisticsState.event = event.target.value; renderStatistics(); document.getElementById("statistics-event").focus(); }
+  });
   menuItems.forEach((item) => {
     item.addEventListener("click", () => {
       state.activeView = item.dataset.view;
@@ -1261,6 +1276,11 @@ function bindWorkspaceEvents() {
     event.preventDefault();
     const form = event.target.closest("form");
     if (!form) {
+      return;
+    }
+    if (state.activeView === "statistics") {
+      statisticsState.filters = readFormData(form);
+      loadStatistics(true);
       return;
     }
     state.filters[state.activeView] = readFormData(form);

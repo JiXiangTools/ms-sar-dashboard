@@ -30,6 +30,7 @@ jobs:
           --health-retries 10
     env:
       MSSAR_MIGRATION_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard_migration_test?sslmode=disable
+      MSSAR_STATISTICS_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard_migration_test?sslmode=disable
     permissions:
       contents: read
     steps:

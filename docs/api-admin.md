@@ -538,3 +538,10 @@ GET /metrics
 - HTTP 指标 label 仅包含 Gin 固定路由模板、method 和状态码；未匹配路由固定使用 `unmatched`。
 - 鉴权、投影 reconcile 和启动检查仅使用固定 operation/outcome 枚举。
 - 禁止把 appid、admin id、request id、原始 path/query、token、secret、password 等写入 label 或指标值。
+
+## 应用统计
+
+- `GET /api/v1/admin/statistics`：管理员 JWT 鉴权，参数 appid/from/to/granularity，最多 90 天。
+- `PUT /api/v1/internal/statistics/apps/:appid/days/:date`：独立统计写入 Bearer token，完整自然日快照幂等覆盖。
+
+完整请求/响应字段、校验、版本冲突、未就绪和错误语义见 [statistics.md](statistics.md#内部写入契约)。

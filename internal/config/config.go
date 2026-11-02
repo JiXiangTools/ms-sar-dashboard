@@ -19,6 +19,7 @@ import (
 const envPrefix = "MSSAR"
 
 type Config struct {
+	Statistics     StatisticsConfig     `mapstructure:"statistics"`
 	App            AppConfig            `mapstructure:"app"`
 	Security       SecurityConfig       `mapstructure:"security"`
 	Auth           AuthConfig           `mapstructure:"auth"`
@@ -31,6 +32,11 @@ type Config struct {
 }
 
 const DefaultMaxRequestBodyBytes int64 = 1024 * 1024
+
+// StatisticsConfig uses an independent service credential; empty disables ingestion.
+type StatisticsConfig struct {
+	IngestToken string `mapstructure:"ingest_token"`
+}
 
 type AppConfig struct {
 	Name              string        `mapstructure:"name"`
@@ -156,6 +162,7 @@ func Load(path string, environment string) (Config, error) {
 }
 
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("statistics.ingest_token", "")
 	v.SetDefault("app.name", version.Name)
 	v.SetDefault("app.env", "dev")
 	v.SetDefault("app.host", "127.0.0.1")

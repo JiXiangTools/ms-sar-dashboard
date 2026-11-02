@@ -68,6 +68,8 @@ func New(cfg config.Config, logger *log.Logger, deps Dependencies) *gin.Engine {
 
 	api := engine.Group("/api/v1/admin")
 	if deps.Services != nil {
+		statisticsHandler := handler.NewStatisticsHandler(deps.Services.Statistics, cfg.Statistics.IngestToken)
+		engine.PUT("/api/v1/internal/statistics/apps/:appid/days/:date", middleware.SecurityRateLimitWithStore(deps.RateLimitStore, 600, time.Minute, "statistics_ingest", middleware.ClientIPRateLimitKey), statisticsHandler.Put)
 		adminHandler := handler.NewAdminHandler(deps.Services.Auth, deps.Services.SSO, deps.Services.Apps, deps.Services.Logs, deps.Services.Debug, metricRegistry)
 		engine.GET("/api/v1/auth/app", adminHandler.ListAuthorizedApps)
 		engine.POST("/api/v1/auth/app", middleware.SecurityRateLimitWithStore(deps.RateLimitStore, 120, time.Minute, "app_authorize", middleware.ClientIPRateLimitKey), adminHandler.AppAuthorize)
@@ -89,6 +91,7 @@ func New(cfg config.Config, logger *log.Logger, deps Dependencies) *gin.Engine {
 			authorized.PUT("/app/:app_id", adminHandler.UpdateApp)
 			authorized.DELETE("/app/:app_id", adminHandler.DeleteApp)
 			authorized.GET("/log", adminHandler.ListLogs)
+			authorized.GET("/statistics", statisticsHandler.Query)
 			authorized.GET("/debug/es/index/:appid", adminHandler.ESIndexInfo)
 			authorized.GET("/debug/es/doc/:appid/:item_id", adminHandler.ESDocument)
 			authorized.POST("/debug/es/search/:appid", adminHandler.ESSearch)

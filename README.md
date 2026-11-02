@@ -291,3 +291,7 @@ MSSAR_DATABASE_DSN='postgres://migration-user:password@postgres:5432/ms_sar_dash
 - `upgrade/sql/migrations/`：不可变的版本化数据库迁移
 - `upgrade/sql/schema.sql`：psql 本地/E2E 兼容引导入口
 - `test/`：契约、配置和冒烟测试
+
+## 应用数据统计
+
+管理端增加「数据统计」：按 App 查看商品规模、上报趋势、普通商品 CTR、页面/详情浏览、打赏、购买及其他行为趋势。Offline 通过独立内部凭据推送按天汇总，Dashboard 持久化并提供管理员查询；部署步骤、口径、回算和数据完整性约束见 [docs/statistics.md](docs/statistics.md)。

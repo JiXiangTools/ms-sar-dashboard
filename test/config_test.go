@@ -149,3 +149,14 @@ func setProductionDependencies(t *testing.T) {
 	t.Setenv("MSSAR_DATABASE_DSN", "postgres://postgres:test@postgres:5432/ms_sar_dashboard?sslmode=disable")
 	t.Setenv("MSSAR_REDIS_ADDRS", "redis:6379")
 }
+
+func TestStatisticsIngestTokenEnvironment(t *testing.T) {
+	t.Setenv("MSSAR_STATISTICS_INGEST_TOKEN", "test-independent-ingest-token")
+	cfg, err := config.Load(repoPath("configs", "test.yaml"), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Statistics.IngestToken != "test-independent-ingest-token" {
+		t.Fatal("statistics credential environment override was not loaded")
+	}
+}
