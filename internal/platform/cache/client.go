@@ -122,7 +122,7 @@ func validateConfig(cfg config.RedisConfig) error {
 
 func normalizeMode(mode string) string {
 	normalized := strings.ToLower(strings.TrimSpace(mode))
-	if normalized == "" {
+	if normalized == "" || normalized == "single" {
 		return ModeStandalone
 	}
 	return normalized

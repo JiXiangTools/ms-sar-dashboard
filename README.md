@@ -255,6 +255,8 @@ compose 默认暴露：
 - PostgreSQL 数据库：`ms_sar_dashboard`
 - Redis DB：`8`
 
+上面是单点 Compose 的默认值。Dashboard 支持 `MSSAR_REDIS_MODE=standalone`（也接受 `single`）、`cluster` 和 `sentinel`。Cluster 配置 `MSSAR_REDIS_ADDRS` 为启动节点列表，并显式设置 `MSSAR_REDIS_DB=0`，不能沿用单点 Compose 的 DB 8。应用授权投影使用跨槽 pipeline，共享限流使用单 key Lua；跨项目配置与真实单点/集群验证见 [Redis 模式与迁移](../alg-rec-offline/docs/redis-modes.md)。
+
 ## 数据库迁移
 
 迁移文件位于 `upgrade/sql/migrations/`，命名为六位递增版本号加名称，例如 `000001_initial.sql`。已发布的文件不可修改；任何结构变化都新增更高版本。迁移器把版本、名称、SHA-256 checksum 和执行时间写入 `schema_migrations`。

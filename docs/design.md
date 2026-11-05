@@ -17,6 +17,8 @@
 - 可选接入 `ms-user-center` 的 CAS 单点登录；CAS 换票成功后仍由 dashboard 签发本地短期 JWT。
 - 在线服务身份使用请求头 `x-dwzauth-appid` + `x-dwzauth-secret`。
 
+Redis 支持单点（`standalone`/`single`）、Cluster 和 Sentinel；Cluster 只允许 DB 0，一个启动节点也显式创建 Cluster 客户端。Cluster 下应用授权投影使用非事务 pipeline 逐 key 写入，限流计数使用单 key Lua。跨项目配置及真实 Redis 验证见 [Redis 模式与迁移](../../alg-rec-offline/docs/redis-modes.md)。
+
 不做多套授权来源，不做 dashboard 到在线服务的鉴权代理，不在首期做管理员管理 UI，不在 debug 页面写 ES 或 Redis。
 
 接口路径、字段和响应示例见 [api-admin.md](./api-admin.md)。迁移和切换步骤见 [README.md](../README.md)。
