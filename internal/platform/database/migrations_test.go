@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/testutil"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -85,6 +86,9 @@ func TestMigrateIntegrationConcurrentLegacyAdoption(t *testing.T) {
 	defer adminDB.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if err := testutil.PreparePostgresExtensions(ctx, adminDB); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := adminDB.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
 		t.Fatalf("create integration schema: %v", err)
 	}

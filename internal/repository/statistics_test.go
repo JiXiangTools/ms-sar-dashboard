@@ -13,6 +13,7 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/database"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/repository"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/testutil"
 )
 
 func TestStatisticsPostgresSnapshots(t *testing.T) {
@@ -26,6 +27,9 @@ func TestStatisticsPostgresSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admin.Close()
+	if err := testutil.PreparePostgresExtensions(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
 	schema := fmt.Sprintf("statistics_test_%d", time.Now().UnixNano())
 	if _, err := admin.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
