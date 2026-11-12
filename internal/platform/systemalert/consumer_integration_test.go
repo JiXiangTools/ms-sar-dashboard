@@ -3,6 +3,7 @@
 package systemalert
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -228,8 +229,11 @@ func TestSystemAlertDelivery(t *testing.T) {
 			if entries := client.XRange(ctx, capacityKey, "-", "+").Val(); len(entries) != 1 || entries[0].Values["alert"] != "first" {
 				t.Fatal("capacity limit trimmed existing pending data")
 			}
-			// Retry exhaustion persists the original event before releasing the queue.
+			// Exhausted valid alerts are dropped, without entering quarantine or replaying.
 			unlock()
+			quarantined := client.XLen(ctx, key+":quarantine").Val()
+			var localLog bytes.Buffer
+			consumer.local.SetOutput(&localLog)
 			exhausted := add(makeAlert("exhausted"))
 			state, _ := json.Marshal(retryState{Attempts: 9})
 			if e := client.HSet(ctx, key+":retry", exhausted, string(state)).Err(); e != nil {
@@ -239,8 +243,23 @@ func TestSystemAlertDelivery(t *testing.T) {
 			if e := consumer.Poll(ctx); e == nil {
 				t.Fatal("delivery exhaustion hidden")
 			}
-			if pending() != 0 || client.XLen(ctx, key+":quarantine").Val() != 2 {
-				t.Fatal("retry exhaustion lost durable quarantine")
+			if pending() != 0 || client.XLen(ctx, key).Val() != 0 || client.HExists(ctx, key+":retry", exhausted).Val() {
+				t.Fatal("exhausted alert or retry state was retained")
+			}
+			if client.XLen(ctx, key+":quarantine").Val() != quarantined {
+				t.Fatal("exhausted alert entered quarantine")
+			}
+			if log := localLog.String(); !strings.Contains(log, "event=alert_delivery_dropped") || !strings.Contains(log, "dropped=1") || !strings.Contains(log, exhausted) {
+				t.Fatalf("missing drop diagnostic: %s", log)
+			}
+			before = calls.Load()
+			status.Store(0)
+			unlock()
+			if e := consumer.Poll(ctx); e != nil {
+				t.Fatal(e)
+			}
+			if calls.Load() != before {
+				t.Fatal("exhausted alert replayed after channel recovery")
 			}
 
 			// Claim scans must progress beyond a page of recently delivered pending.
@@ -272,5 +291,85 @@ func TestSystemAlertDelivery(t *testing.T) {
 				t.Fatal("claim scan starved abandoned messages beyond the first page")
 			}
 		})
+	}
+}
+
+func TestInvalidRetryStateDoesNotBlockDelivery(t *testing.T) {
+	for _, mode := range []string{"single", "cluster"} {
+		for _, quarantineUnavailable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/quarantine_unavailable=%t", mode, quarantineUnavailable), func(t *testing.T) {
+				addresses := os.Getenv("SAR_TEST_REDIS_SINGLE_ADDR")
+				if mode == "cluster" {
+					addresses = os.Getenv("SAR_TEST_REDIS_CLUSTER_ADDRS")
+				}
+				if addresses == "" {
+					t.Skip("requires real Redis fixture")
+				}
+				client, err := Connect(RedisConfig{Mode: mode, Addrs: strings.Split(addresses, ","), Password: os.Getenv("SAR_TEST_REDIS_PASSWORD")})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer client.Close()
+				ctx := context.Background()
+				prefix := fmt.Sprintf("alert_retry_test_%d:", time.Now().UnixNano())
+				key := prefix + StreamName
+				defer client.Del(ctx, key, key+":retry", key+":send-slot", key+":quarantine")
+				var calls atomic.Int64
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls.Add(1)
+					fmt.Fprint(w, `{"code":0}`)
+				}))
+				defer server.Close()
+				consumer := NewConsumer(client, prefix, server.URL)
+				add := func(id string) string {
+					t.Helper()
+					raw, e := json.Marshal(Alert{SchemaVersion: 1, AlertID: id, Level: "ERROR", Reason: "Redis unavailable", CreatedAt: time.Now().Unix(), Module: "ms-rec-online", Event: "publish_failed", Env: "test"})
+					if e != nil {
+						t.Fatal(e)
+					}
+					streamID, e := client.XAdd(ctx, &redis.XAddArgs{Stream: key, Values: map[string]any{"alert": string(raw)}}).Result()
+					if e != nil {
+						t.Fatal(e)
+					}
+					return streamID
+				}
+				badID := add("corrupt-retry")
+				if err := client.HSet(ctx, key+":retry", badID, `{"attempts":`).Err(); err != nil {
+					t.Fatal(err)
+				}
+				add("healthy-after-corrupt-retry")
+				if quarantineUnavailable {
+					if err := client.Set(ctx, key+":quarantine", "wrong type", 0).Err(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				err = consumer.Poll(ctx)
+				if (err != nil) != quarantineUnavailable {
+					t.Fatalf("Poll error=%v, quarantine unavailable=%t", err, quarantineUnavailable)
+				}
+				if calls.Load() != 1 {
+					t.Fatal("corrupt retry state blocked the healthy alert")
+				}
+				if quarantineUnavailable {
+					pending, e := client.XPending(ctx, key, ConsumerGroup).Result()
+					if e != nil || pending.Count != 1 || !client.HExists(ctx, key+":retry", badID).Val() {
+						t.Fatal("failed quarantine did not preserve corrupt record and retry state")
+					}
+					if err := client.Del(ctx, key+":quarantine").Err(); err != nil {
+						t.Fatal(err)
+					}
+					if err := consumer.Poll(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+				rows, err := client.XRange(ctx, key+":quarantine", "-", "+").Result()
+				if err != nil || len(rows) != 1 || rows[0].Values["stream_id"] != badID || rows[0].Values["error"] != "invalid alert retry state" {
+					t.Fatalf("corrupt record was not isolated with its identity and reason: %v, %v", rows, err)
+				}
+				if client.XLen(ctx, key).Val() != 0 || client.HExists(ctx, key+":retry", badID).Val() {
+					t.Fatal("isolated record or retry state still present in the active queue")
+				}
+			})
+		}
 	}
 }

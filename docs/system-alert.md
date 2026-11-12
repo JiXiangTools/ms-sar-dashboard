@@ -25,13 +25,13 @@ Dashboard、ms-rec-online、ms-search-online、ms-data-receiver 和 alg-rec-offl
 
 - ERROR、CRITICAL、FATAL、PANIC 可入队；DEBUG、INFO、WARN 不告警。发送端还会独立检查级别。
 - created_at 为秒级 Unix 时间戳，飞书通知按 Asia/Shanghai 显示；后台任务的 request_id 可以为空。
-- event 是稳定错误类型，location 是发生位置；Go 从调用栈记录业务文件和行号，无法定位时使用日志 event；Python 使用模块、函数和行号。
+- event 是稳定错误类型，location 是发生位置；Go 从调用栈记录业务文件和行号，无法定位时使用日志 event；Python 使用模块、函数和行号。Python 异常日志的 reason 同时包含异常类型、实际原因和日志消息，params.error 保留异常摘要；两者继续脱敏并限制长度，不采集完整堆栈或局部变量。
 - params 使用受控参数白名单，包括 appid、状态、操作、策略/实验版本、stream_id、error 等；不采集请求体、用户 ID、认证 Header、完整 IP 或 User-Agent。原因和参数同时脱敏凭据、截断长度。单条有效载荷最多 8 KiB。
 - alert_id 在写入重试中保持不变。跨重试可能产生重复记录，不承诺通知严格只发送一次。
 
 ## 生产者与容量边界
 
-开启后，ERROR 日志只进入本机 1024 条有界队列。独立后台 worker 使用独立 Redis 连接池，每批最多 100 条，单次 Redis 操作限时 300ms，失败最多尝试 3 次。正常退出最多等待 2 秒排空本机队列。Python 在后台首次使用时才初始化独立 Redis client，告警不让原本不依赖 Redis 的任务在请求或任务处理线程中等待连接。
+开启后，ERROR 日志只进入本机 1024 条有界队列。独立后台 worker 使用独立 Redis 连接池，每批最多 100 条，单次 Redis 操作限时 300ms，失败最多尝试 3 次。正常退出最多等待 2 秒排空本机队列；ms-rec-online 的启动失败、关闭失败等受控错误退出同样执行排空，再以非零状态退出。Python 在后台首次使用时才初始化独立 Redis client，告警不让原本不依赖 Redis 的任务在请求或任务处理线程中等待连接。
 
 本机队列满或重试失败时，保留原有业务错误日志，记录 alerts_dropped / alert_enqueue_failed 和丢弃数量。告警线程自身的错误直接输出本地日志，不再次入队。业务请求不等待飞书，也不等待告警 Redis I/O。
 
@@ -43,9 +43,9 @@ Dashboard、ms-rec-online、ms-search-online、ms-data-receiver 和 alg-rec-offl
 - 每轮有界读取，按 env/module/level/event 聚合。通知带发生次数、首次/最后时间、样例 request_id、原因、位置、参数和告警 ID；每次最多发送 10 组，并优先处理旧告警。
 - 通过共享 `<prefix>system-alert:send-slot` 限速，多 Dashboard 合计最多每秒一次。飞书请求超时 3 秒，拒绝重定向，响应最多读取 4 KiB。消息体小于 19 KiB。
 - HTTP 200 且飞书业务 code=0 才算成功；兼容旧 StatusCode=0。成功后单 Key Lua 执行 XACK + XDEL，不提前确认。
-- 失败保留 pending，退避 5、10、20 秒，最长 5 分钟；重试状态保存在 `<prefix>system-alert:retry` Hash，实例切换后继续。失败累计 10 次后隔离。
-- 非法消息或重试耗尽的消息，先写 `<prefix>system-alert:quarantine` Stream，保留 stream_id、原 fields、原因和隔离时间，成功后才确认原消息。隔离失败则保留原 pending，其他合法告警仍可处理。
-- 隔离队列由运维核对并清理；修复来源或机器人配置后，可按原 alert_id 将合法 JSON 重投主队列。不要直接删除未确认主队列消息。
+- 失败保留 pending，退避 5、10、20 秒，最长 5 分钟；重试状态保存在 `<prefix>system-alert:retry` Hash，实例切换后继续。有效告警发送失败累计 10 次后，直接 XACK + XDEL 并清除重试状态，本地记录丢弃数量、stream_id 和原因；不进入隔离队列，渠道恢复后不再补发。
+- 非法消息或重试状态损坏的记录，先写 `<prefix>system-alert:quarantine` Stream，保留 stream_id、原 fields、原因和隔离时间，成功后才确认原消息并清除其重试状态。隔离失败则保留原 pending，其他合法告警仍可处理。Redis 连接等基础设施错误仍按消费失败处理。
+- 隔离队列仅保存需要排查的坏记录，由运维核对并清理；修复来源或重试状态后，可按原 alert_id 将合法 JSON 重投主队列。不要直接删除未确认主队列消息。
 
 ## 环境配置
 

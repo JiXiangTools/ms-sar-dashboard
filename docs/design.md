@@ -671,4 +671,4 @@ UI 规则：
 
 ## 集中告警
 
-ERROR 及以上日志由独立后台任务异步写入共享 Redis system-alert Stream，Dashboard 每 5 秒集中发送飞书；未启用时不入队。环境变量、字段、容量保护和重试隔离规则见[集中系统告警](system-alert.md)。
+ERROR 及以上日志由独立后台任务异步写入共享 Redis system-alert Stream，Dashboard 每 5 秒集中发送飞书；未启用时不入队。坏消息和损坏的重试状态进入隔离队列，有效告警发送失败累计 10 次后直接丢弃并记录本地日志。环境变量、字段、容量保护和重试规则见[集中系统告警](system-alert.md)。

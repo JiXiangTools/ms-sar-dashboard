@@ -22,6 +22,7 @@ const PollInterval = 5 * time.Second
 const maxAttempts = 10
 
 var alertTimezone = time.FixedZone("Asia/Shanghai", 8*60*60)
+var errInvalidRetryState = errors.New("invalid alert retry state")
 
 type Consumer struct {
 	client             redis.UniversalClient
@@ -116,6 +117,12 @@ func (c *Consumer) Poll(ctx context.Context) error {
 			continue
 		}
 		state, err := c.retry(ctx, message.ID)
+		if errors.Is(err, errInvalidRetryState) {
+			if err := c.isolate(ctx, message, errInvalidRetryState.Error()); err != nil {
+				failures = append(failures, err)
+			}
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -158,14 +165,21 @@ func (c *Consumer) Poll(ctx context.Context) error {
 	if err = c.send(ctx, text); err != nil {
 		for _, item := range selected {
 			state, stateErr := c.retry(ctx, item.message.ID)
+			if errors.Is(stateErr, errInvalidRetryState) {
+				if e := c.isolate(ctx, item.message, errInvalidRetryState.Error()); e != nil {
+					failures = append(failures, e)
+				}
+				continue
+			}
 			if stateErr != nil {
 				return stateErr
 			}
 			state.Attempts++
 			if state.Attempts >= maxAttempts {
-				if e := c.isolate(ctx, item.message, "delivery attempts exhausted: "+clean(err.Error(), 256)); e != nil {
+				if e := c.ack(ctx, []string{item.message.ID}); e != nil {
 					return e
 				}
+				c.local.Printf("level=ERROR event=alert_delivery_dropped dropped=1 stream_id=%s attempts=%d reason=%s", item.message.ID, state.Attempts, clean(err.Error(), 256))
 				continue
 			}
 			delay := 5 * time.Second << uint(state.Attempts-1)
@@ -178,7 +192,7 @@ func (c *Consumer) Poll(ctx context.Context) error {
 				return e
 			}
 		}
-		return err
+		return errors.Join(append(failures, err)...)
 	}
 	ids := make([]string, 0, len(selected))
 	for _, item := range selected {
@@ -205,7 +219,7 @@ func (c *Consumer) retry(ctx context.Context, id string) (retryState, error) {
 		return state, err
 	}
 	if err = json.Unmarshal([]byte(raw), &state); err != nil {
-		return state, fmt.Errorf("invalid alert retry state")
+		return state, errInvalidRetryState
 	}
 	return state, nil
 }
