@@ -25,7 +25,7 @@ Offline 负责全部业务聚合和去重，只向 Dashboard 发送计数，不�
 
 - 仅供 Offline 调用，Header 为 `Authorization: Bearer <MSSAR_STATISTICS_INGEST_TOKEN>`。独立于管理员 JWT 和 App Secret；未配置则返回 503，错误凭据返回 401。生产环境经内网或 HTTPS 访问，网关不要公开内部路径。
 - 每次写一个 App 的完整自然日快照，包括 24 个小时和日汇总；默认全局请求体上限 1 MiB，每来源 600 次/分钟。大批量回算客户端须遵守 `Retry-After`。
-- `schema_version=1`；`appid` 是规范十进制字符串；`date` 为 YYYY-MM-DD；`timezone=Asia/Shanghai`；`revision` 是正整数且不超过 JavaScript 安全整数上限；`generated_at` 为统计截点的秒级时间戳。
+- 支持 `schema_version=1/2`，Offline 当前发送 2；`appid` 是规范十进制字符串；`date` 为 YYYY-MM-DD；`timezone=Asia/Shanghai`；`revision` 是正整数且不超过 JavaScript 安全整数上限；`generated_at` 为统计截点的秒级时间戳。
 - `counts` 含 `item_reports,new_items,exposures,clicks,missing_event_ids,duplicate_events,events`，其中 events 为小写事件名到非负次数的映射。所有可加计数必须等于 24 小时合计。
 - `hours` 按 0..23 排序，每项含 `hour,reported_items,counts`；日级独立 `reported_items` 计数不能用小时去重数相加替代。
 - `snapshot` 含 `generated_at,history_since,item_total,item_available`。
@@ -46,13 +46,32 @@ Offline 负责全部业务聚合和去重，只向 Dashboard 发送计数，不�
 1. 先部署支持 TIP 的 ms-data-receiver，业务方在成功打赏后按上述契约上报。
 2. 使用 `ms-sar-dbtool` 执行迁移 000002；运行账户只需两张统计表的 SELECT/INSERT/UPDATE 权限，DDL 仍由迁移账户执行。原始数据不落 Dashboard 数据库。
 3. 在 Dashboard 配置 `MSSAR_STATISTICS_INGEST_TOKEN`，Offline 设置同值 `AROF_STATISTICS_INGEST_TOKEN`，通过秘密管理系统注入，勿提交仓库。
-4. Offline 设置 `AROF_STATISTICS_DASHBOARD_URL=http://ms-sar-dashboard:8081` 和现有 `AROF_SAR_DASHBOARD_AUTH_APP_URL=http://ms-sar-dashboard:8081/api/v1/auth/app`。运行 `bash admin/start.sh rec-statistics --env prod`，默认每次成功后间隔 600 秒；单次回算使用 `RUN_INTERVAL_SECONDS=0`。
+4. Offline 设置 `AROF_STATISTICS_DASHBOARD_URL=http://ms-sar-dashboard:8081` 和共享 Redis 连接。有效 App 列表直接读共享 Redis，不再 HTTP 拉取 Dashboard。运行 `bash admin/start.sh rec-statistics --env prod`，默认每次成功后间隔 600 秒；单次回算使用 `RUN_INTERVAL_SECONDS=0`。
 5. 统计实例挂载完整 raw 数据卷和持久 state 卷，与 consumers 使用同一份数据。必须存在 item/behavior 根目录；缺少挂载、已发布历史文件丢失/缩短、损坏行会阻止覆盖旧统计。首次运行只能基于现存 raw 声明历史，历史不完整应先恢复备份。
-6. v1 每次用磁盘临时 SQLite 聚合完整 raw 历史，内存只保留汇总，默认发布最近 90 天（`AROF_STATISTICS_DAYS=1..90`）。临时数据库仅在 Offline 本地用于计算，成功或异常退出时清理；不向 Dashboard 暴露。应监控磁盘空间和运行时长；数据规模增长时演进为增量任务。
+6. 每次用磁盘临时 SQLite 聚合完整 raw 历史，内存只保留汇总，默认发布最近 90 天（`AROF_STATISTICS_DAYS=1..90`）。临时聚合库成功或异常退出时清理；另有持久决策归档，见下文。应监控磁盘空间和运行时长；数据规模增长时演进为增量任务。
 7. `AROF_APPID` 可指定单 App。禁止给统计任务传 AROF_DATE/HOUR/START_DATE/END_DATE，避免截断历史后覆盖库存。所有副本共用同一 state 卷，并用文件锁防止并行任务；revision 与上次成功 raw 清单持久化在 state/statistics。
 8. 前台「数据统计」选择 App、7/30 天或自定义区间、小时/天粒度。检查商品卡片、CTR、浏览、打赏购买及其他事件趋势。查看数据明细可获得精确值。
 
-## 验证
+## 实验归因扩展 v2
+
+Online 以 rec_id 记录真实决策，Offline 的 `rec-decision-consumer` 从共享 Redis 归档，rec-statistics 将平铺 properties.rec_id / experiment_id / strategy_id 与原决策核对。客户端不传版本号，版本取自决策。旧卡片在新版本发布后点击，仍计入原版本；无 rec_id 的历史行为只进入原业务计数，不推算分组。
+
+schema_version=2 的日快照增加：
+
+```json
+{
+  "experiments": [{"experiment_id":"exp_home","experiment_version":1,"strategy_id":"a","recommendations":100,"exposures":80,"clicks":8,"events":{"show":80,"click":8}}],
+  "attribution_quality": {"missing_decision":0,"metadata_mismatch":0,"item_mismatch":0}
+}
+```
+
+每组按 experiment_id + experiment_version + strategy_id 唯一；最多 1000 组，每组最多 64 种行为。recommendations 为成功推荐请求数，不是用户数，按决策 created_at 归日；行为按 action_at 归日。核对通过且 item_id 在决策返回列表中的普通物品行为才进入实验计数，广告沿用独立统计。三类质量计数分别表示找不到决策、分组元数据不符和返回物品不符。归档延迟可在下一次重算修正。
+
+查询结果增加 experiments 和 attribution_quality；按原版本分别合并日数据，不合并不同版本。实验汇总始终是所选完整自然日的汇总，小时粒度不会重复累加日计数。页面明确显示此口径及曝光为零的空 CTR。这里是已关联事件的效果比较，未实现显著性检验或用户去重。
+
+部署前应用迁移 000003，并启动 `bash admin/start.sh rec-decision-consumer --env prod`；该进程和 rec-statistics 必须共享持久 data 卷。共享 Redis、模板和队列契约见 [Offline 实验文档](../../alg-rec-offline/docs/recommendation-experiments.md)。
+
+## 验证命令
 
 - Dashboard：`go test ./...`；设置专用 `MSSAR_STATISTICS_TEST_DSN` 和 `MSSAR_MIGRATION_TEST_DSN` 后执行真实 PostgreSQL 快照和迁移测试。
 - Offline：`python -m pytest -q`，统计测试覆盖跨请求/跨交易/Kafka 去重、商品更新和禁用、迟到事件、缺失事件 ID、零值与未来事件、历史缺失防护。

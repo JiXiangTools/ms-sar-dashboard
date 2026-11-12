@@ -13,8 +13,13 @@ import (
 const namespace = "ms_sar_dashboard"
 
 var knownRouteTemplates = map[string]struct{}{
-	"/api/v1/admin/statistics":                           {},
-	"/api/v1/internal/statistics/apps/:appid/days/:date": {},
+	"/api/v1/admin/recommendation/sources":                 {},
+	"/api/v1/admin/recommendation/apps/:appid":             {},
+	"/api/v1/admin/recommendation/apps/:appid/strategies":  {},
+	"/api/v1/admin/recommendation/apps/:appid/experiments": {},
+	"/api/v1/admin/recommendation/apps/:appid/publication": {},
+	"/api/v1/admin/statistics":                             {},
+	"/api/v1/internal/statistics/apps/:appid/days/:date":   {},
 	"/health":                                    {},
 	"/metrics":                                   {},
 	"/sar-admin":                                 {},

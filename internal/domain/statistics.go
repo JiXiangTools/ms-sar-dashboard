@@ -26,14 +26,26 @@ type StatisticsSnapshot struct {
 }
 
 type StatisticsDay struct {
-	SchemaVersion int                `json:"schema_version"`
-	AppID         string             `json:"appid"`
-	Date          string             `json:"date"`
-	Timezone      string             `json:"timezone"`
-	Revision      int64              `json:"revision"`
-	GeneratedAt   int64              `json:"generated_at"`
-	ReportedItems int64              `json:"reported_items"`
-	Counts        StatisticsCounts   `json:"counts"`
-	Hours         []StatisticsHour   `json:"hours"`
-	Snapshot      StatisticsSnapshot `json:"snapshot"`
+	Experiments        []ExperimentStatistics `json:"experiments,omitempty"`
+	AttributionQuality map[string]int64       `json:"attribution_quality,omitempty"`
+	SchemaVersion      int                    `json:"schema_version"`
+	AppID              string                 `json:"appid"`
+	Date               string                 `json:"date"`
+	Timezone           string                 `json:"timezone"`
+	Revision           int64                  `json:"revision"`
+	GeneratedAt        int64                  `json:"generated_at"`
+	ReportedItems      int64                  `json:"reported_items"`
+	Counts             StatisticsCounts       `json:"counts"`
+	Hours              []StatisticsHour       `json:"hours"`
+	Snapshot           StatisticsSnapshot     `json:"snapshot"`
+}
+
+type ExperimentStatistics struct {
+	ExperimentID      string           `json:"experiment_id"`
+	ExperimentVersion int64            `json:"experiment_version"`
+	StrategyID        string           `json:"strategy_id"`
+	Recommendations   int64            `json:"recommendations"`
+	Exposures         int64            `json:"exposures"`
+	Clicks            int64            `json:"clicks"`
+	Events            map[string]int64 `json:"events"`
 }

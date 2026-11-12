@@ -37,3 +37,31 @@ VALUES (1, 'initial', '29acffd1a22c56e3bdd7ebc181bdb2f972f34ebe60e797cc4a2162cd0
 \endif
 
 COMMIT;
+
+BEGIN;
+SELECT pg_advisory_xact_lock(21765190250021954);
+DO $$ BEGIN
+IF EXISTS (SELECT 1 FROM schema_migrations WHERE version=2 AND (name<>'statistics' OR checksum<>'bfbc77a9f1414239f68599769c463c86a5453b7d9af648359fa361bb16ed168f')) THEN
+RAISE EXCEPTION 'migration 000002 metadata does not match this build';
+END IF;
+END $$;
+SELECT NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version=2) AS migration_000002_pending \gset
+\if :migration_000002_pending
+\ir migrations/000002_statistics.sql
+INSERT INTO schema_migrations(version,name,checksum) VALUES (2,'statistics','bfbc77a9f1414239f68599769c463c86a5453b7d9af648359fa361bb16ed168f');
+\endif
+COMMIT;
+
+BEGIN;
+SELECT pg_advisory_xact_lock(21765190250021954);
+DO $$ BEGIN
+IF EXISTS (SELECT 1 FROM schema_migrations WHERE version=3 AND (name<>'recommendation_experiments' OR checksum<>'3d0867786a9f88f95c717860a2edfc2cac4e4437a42ce552eef3e1ad3ccd948a')) THEN
+RAISE EXCEPTION 'migration 000003 metadata does not match this build';
+END IF;
+END $$;
+SELECT NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version=3) AS migration_000003_pending \gset
+\if :migration_000003_pending
+\ir migrations/000003_recommendation_experiments.sql
+INSERT INTO schema_migrations(version,name,checksum) VALUES (3,'recommendation_experiments','3d0867786a9f88f95c717860a2edfc2cac4e4437a42ce552eef3e1ad3ccd948a');
+\endif
+COMMIT;

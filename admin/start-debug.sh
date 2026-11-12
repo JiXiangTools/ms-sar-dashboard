@@ -13,7 +13,7 @@ POSTGRES_CONTAINER="${MSSAR_POSTGRES_CONTAINER:-services-deploy-postgres}"
 REDIS_CONTAINER="${MSSAR_REDIS_CONTAINER:-services-deploy-redis}"
 ELASTICSEARCH_CONTAINER="${MSSAR_ELASTICSEARCH_CONTAINER:-services-deploy-elasticsearch}"
 DATABASE_NAME="${MSSAR_DATABASE_NAME:-ms_sar_dashboard}"
-REDIS_DB="${MSSAR_REDIS_DB:-8}"
+REDIS_DB="${MSSAR_REDIS_DB:-0}"
 RESET_AUTH_CACHE="${RESET_AUTH_CACHE:-false}"
 
 . "${SCRIPT_DIR}/services-deploy-env.sh"

@@ -109,6 +109,7 @@ function renderStatistics() {
     <div class="statistics-status">${info}</div>
     ${notices.map(n => `<div class="statistics-notice" role="status">${escapeHTML(n)}</div>`).join("")}
     <div class="statistics-cards">${cards.map(([label,value]) => `<div class="statistics-card"><span>${label}</span><strong>${statisticsNumber(value)}</strong></div>`).join("")}<div class="statistics-card"><span>期间 CTR</span><strong>${statisticsPercent(d.ctr)}</strong></div></div>
+    ${renderExperimentStatistics(d)}
     <div class="statistics-chart-grid">
     ${statisticsChart("商品上报趋势",d.points,[{label:"上报记录",value:count("item_reports"),color:"#0f6b5c"},{label:"首次上报商品",value:count("new_items"),color:"#b85f3d"}])}
     ${statisticsChart("曝光与点击趋势",d.points,[{label:"商品曝光",value:count("exposures"),color:"#547694"},{label:"商品点击",value:count("clicks"),color:"#0f6b5c"}])}
@@ -120,4 +121,12 @@ function renderStatistics() {
     <p class="statistics-help">CTR = 普通商品点击次数 ÷ 普通商品曝光次数。搜索和广告单独统计；曝光为零时无点击率。浏览区分页面与详情，阅读进度单列。当前时间段持续更新，购买表示上报的购买事件次数。已排除 ${statisticsNumber(summary.duplicate_events)} 条重复事件。</p>
     <details class="statistics-details"><summary>查看数据明细与精确数值</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>上报记录</th><th>去重商品</th><th>点击</th><th>CTR</th><th>页面浏览</th><th>详情浏览</th><th>打赏</th><th>购买</th><th>${escapeHTML(statisticsLabels[event]||event)}</th></tr></thead><tbody>${d.points.map(p=>`<tr><td>${escapeHTML(p.time.slice(0,d.granularity==="day"?10:16).replace("T"," "))}${p.partial?" · 统计中":""}</td><td>${statisticsNumber(p.counts?.item_reports)}</td><td>${statisticsNumber(p.reported_items)}</td><td>${statisticsNumber(p.counts?.clicks)}</td><td>${statisticsPercent(p.ctr)}</td>${["page_view","item_detail_view","tip","purchase",event].map(k=>`<td>${statisticsNumber(p.counts==null?null:p.counts.events[k]||0)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></details>
   </div>`;
+}
+
+function renderExperimentStatistics(data) {
+  const groups = data.experiments || [], quality = data.attribution_quality || {};
+  const labels = {missing_decision: "尚未归档的推荐决策", metadata_mismatch: "分组标识不一致", item_mismatch: "商品不属于推荐结果"};
+  return `<section class="statistics-details"><h4>实验策略效果</h4><p class="statistics-help">按实验版本分别统计，降级请求保留原分组。推荐次数按请求日期计，行为按发生日期计；迟到行为通过 rec_id 归入原实验版本。CTR = 点击 / 曝光。</p>
+    ${Object.entries(quality).filter(([, n]) => n > 0).map(([key,n]) => `<div class="statistics-notice" role="status">${escapeHTML(labels[key] || key)}：${statisticsNumber(n)} 条，暂不计入实验效果。</div>`).join("")}
+    ${groups.length ? `<div class="table-wrap"><table><thead><tr><th>实验</th><th>版本</th><th>策略</th><th>推荐次数</th><th>曝光</th><th>点击</th><th>CTR</th><th>购买</th><th>打赏</th></tr></thead><tbody>${groups.map(g => `<tr><td>${escapeHTML(g.experiment_id)}</td><td>v${g.experiment_version}</td><td>${escapeHTML(g.strategy_id)}</td><td>${statisticsNumber(g.recommendations)}</td><td>${statisticsNumber(g.exposures)}</td><td>${statisticsNumber(g.clicks)}</td><td>${statisticsPercent(g.exposures ? g.clicks / g.exposures : null)}</td><td>${statisticsNumber(g.events?.purchase || 0)}</td><td>${statisticsNumber(g.events?.tip || 0)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="statistics-empty">暂无实验归因数据。推荐结果中的 rec_id 及 extra 内的实验、策略标识需随行为上报。</div>`}</section>`;
 }

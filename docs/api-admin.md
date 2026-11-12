@@ -56,6 +56,12 @@ Authorization: Bearer <access_token>
 | `PUT` | `/api/v1/admin/app/{app_id}` | 是 | 修改应用 |
 | `DELETE` | `/api/v1/admin/app/{app_id}` | 是 | 删除应用 |
 | `GET` | `/api/v1/admin/log` | 是 | 审计日志 |
+| `GET` | `/api/v1/admin/recommendation/sources` | 是 | 全局召回源最新版本 |
+| `POST` | `/api/v1/admin/recommendation/sources` | 是 | 创建召回源新版本 |
+| `GET` | `/api/v1/admin/recommendation/apps/:appid` | 是 | 策略、实验、发布状态和使用历史 |
+| `POST` | `/api/v1/admin/recommendation/apps/:appid/strategies` | 是 | 创建策略新版本 |
+| `POST` | `/api/v1/admin/recommendation/apps/:appid/experiments` | 是 | 创建实验新版本草稿 |
+| `POST` | `/api/v1/admin/recommendation/apps/:appid/publication` | 是 | 发布或停止实验 |
 | `GET` | `/api/v1/admin/debug/es/index/{appid}` | 是 | ES 索引信息 |
 | `GET` | `/api/v1/admin/debug/es/doc/{appid}/{item_id}` | 是 | ES 文档查看 |
 | `POST` | `/api/v1/admin/debug/es/search/{appid}` | 是 | ES 只读查询 |
@@ -63,6 +69,8 @@ Authorization: Bearer <access_token>
 | `POST` | `/api/v1/admin/debug/rec` | 是 | 推荐 debug |
 
 首期不提供 refresh token，不提供管理员管理 API。
+
+推荐配置字段、请求示例、版本冲突及历史时间语义见 [推荐策略与实验版本](recommendation.md)。
 
 ## 3. 登录
 

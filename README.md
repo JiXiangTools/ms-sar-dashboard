@@ -17,11 +17,15 @@
 - 账号密码登录，登录成功和失败都必须记录日志。
 - 可选单点登录。
 - 授权应用管理：新增、删除、修改、分页列表。
+- 推荐实验：全局召回源、应用策略、不可变实验版本、流量分桶与历史生效区间。
+- 数据统计：按实验版本和策略查看推荐请求、曝光、点击与行为次数。
 
 ## 文档导航
 
 - [docs/design.md](./docs/design.md)：总体设计、职责边界、数据模型和认证授权方案
 - [docs/api-admin.md](./docs/api-admin.md)：管理端 API 契约
+- [docs/recommendation.md](./docs/recommendation.md)：推荐实验配置、发布、版本历史与上线步骤
+- [docs/statistics.md](./docs/statistics.md)：业务统计与实验归因口径
 - [docs/agent.md](./docs/agent.md)：协作约束和后续实现注意事项
 
 ## 参考项目
@@ -36,7 +40,7 @@
 目标状态：
 
 - dashboard 管理员登录依赖 PostgreSQL，不再从配置文件读取管理员账号密码。
-- dashboard 管理应用授权，同步内部 Redis 授权投影，并提供 `POST /api/v1/auth/app` 校验接口。
+- dashboard 管理应用授权，同步共享 Redis 的授权和推荐配置投影，并提供 `POST /api/v1/auth/app` 校验接口。
 - `ms-data-receiver`、`ms-rec-online`、`ms-search-online` 统一使用 `x-dwzauth-appid`、`x-dwzauth-secret`、`x-request-id`。
 - 三个在线服务只调用 dashboard 授权接口，旧 `data/apps.json`、固定 `x-dwz-auth`、固定 `app.appid` 不再作为线上授权来源。
 
@@ -81,7 +85,7 @@
 
 - dashboard：登录成功/失败、登录日志、应用创建/列表/修改/删除、Redis 同步、审计日志脱敏。
 - data-receiver：统一 Header 授权成功，secret 错误、应用删除时失败；dashboard 授权接口不可用且无历史成功缓存时失败，有历史成功缓存时按接入服务契约短期沿用；Kafka 消息格式不变。
-- rec-online：统一 Header 授权成功，推荐 Redis key 使用 Header appid，推荐响应格式不变。
+- rec-online：统一 Header 授权成功，推荐 Redis key 使用 Header appid，响应增加 rec_id 和 extra，原有内容/广告字段保持兼容。
 - search-online：统一 Header 授权成功，ES 索引使用 Header appid，搜索响应格式不变。
 - debug：ES Debug 和推荐 Debug 只读，操作写审计日志。
 
@@ -219,7 +223,7 @@ python3 ./test/test-action-upload.py
 ## 容器与打包
 
 - `Dockerfile`：运行镜像构建
-- `docker-compose.yml`：本地 compose 编排，包含一次性迁移任务、服务、PostgreSQL 和 Redis
+- `docker-compose.yml`：本地 compose 编排，包含一次性迁移任务、服务和 PostgreSQL；Redis 连接推荐链路共享实例
 - `admin/build-image.sh`：镜像打包
 - `admin/docker-postgres-init.sh`：仅供旧的 PostgreSQL initdb/测试环境兼容引导；正式升级使用 `ms-sar-dbtool`
 
@@ -239,6 +243,9 @@ export MSSAR_DATABASE_DSN='postgres://postgres:URL_ENCODED_PASSWORD@postgres:543
 export MSSAR_DATABASE_MIGRATION_DSN="${MSSAR_DATABASE_DSN}"
 export MSSAR_AUTH_JWT_SECRET='replace-with-at-least-32-random-characters'
 export MSSAR_SECURITY_MAX_REQUEST_BODY_BYTES='1048576'
+export MSSAR_REDIS_MODE='cluster'
+export MSSAR_REDIS_ADDRS='redis-a:6379,redis-b:6379,redis-c:6379'
+# 按共享集群实际配置注入 MSSAR_REDIS_USERNAME / MSSAR_REDIS_PASSWORD。
 # 仅部署在受控反向代理后时设置，例如：
 # export MSSAR_SECURITY_TRUSTED_PROXY_CIDRS='10.20.0.0/24'
 export MSSAR_INIT_ADMIN_NAME='your-admin'
@@ -253,9 +260,9 @@ compose 默认暴露：
 - 服务：`http://127.0.0.1:8588`
 - 管理页面：`http://127.0.0.1:8588/sar-admin`
 - PostgreSQL 数据库：`ms_sar_dashboard`
-- Redis DB：`8`
+- 共享 Redis DB：`0`，地址由 `MSSAR_REDIS_ADDRS` 显式提供
 
-上面是单点 Compose 的默认值。Dashboard 支持 `MSSAR_REDIS_MODE=standalone`（也接受 `single`）、`cluster` 和 `sentinel`。Cluster 配置 `MSSAR_REDIS_ADDRS` 为启动节点列表，并显式设置 `MSSAR_REDIS_DB=0`，不能沿用单点 Compose 的 DB 8。应用授权投影使用跨槽 pipeline，共享限流使用单 key Lua；跨项目配置与真实单点/集群验证见 [Redis 模式与迁移](../alg-rec-offline/docs/redis-modes.md)。
+Compose 默认连接共享 Cluster DB 0，不再创建 Dashboard 独立 Redis。Dashboard 仍支持 `MSSAR_REDIS_MODE=standalone`（也接受 `single`）、`cluster` 和 `sentinel`。配置前缀必须与 Online、Offline 一致。应用授权投影使用跨槽 pipeline，配置发布和共享限流使用单 Key Lua；跨项目配置与真实单点/集群验证见 [Redis 模式与迁移](../alg-rec-offline/docs/redis-modes.md)。
 
 ## 数据库迁移
 

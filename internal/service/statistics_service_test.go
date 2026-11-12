@@ -101,3 +101,26 @@ func TestStatisticsQueryFlagsUnfinishedHistoricalDay(t *testing.T) {
 		t.Fatal("a fresh inventory snapshot must not hide unfinished historical statistics")
 	}
 }
+
+func TestStatisticsExperimentVersionsRemainSeparate(t *testing.T) {
+	day := testStatisticsDay("2026-01-01", 10, 2)
+	day.SchemaVersion = 2
+	day.Experiments = []domain.ExperimentStatistics{{ExperimentID: "exp_one", ExperimentVersion: 1, StrategyID: "a", Recommendations: 3, Exposures: 4, Clicks: 1, Events: map[string]int64{"show": 4, "click": 1}}, {ExperimentID: "exp_one", ExperimentVersion: 2, StrategyID: "a", Recommendations: 5, Exposures: 6, Clicks: 1, Events: map[string]int64{"show": 6, "click": 1}}}
+	day.AttributionQuality = map[string]int64{"missing_decision": 2}
+	if err := validateStatistics(day, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewStatisticsService(&fakeStatisticsRepository{days: []domain.StatisticsDay{day}}).Query(context.Background(), "100001", day.Date, day.Date, "hour")
+	if err != nil || len(result.Experiments) != 2 || result.Experiments[0].ExperimentVersion != 1 || result.Experiments[1].Recommendations != 5 || result.AttributionQuality["missing_decision"] != 2 {
+		t.Fatalf("version attribution lost: %+v %v", result, err)
+	}
+	day.Experiments = append(day.Experiments, day.Experiments[0])
+	if err := validateStatistics(day, time.Now()); err == nil {
+		t.Fatal("duplicate experiment group accepted")
+	}
+	day.Experiments = day.Experiments[:2]
+	day.Experiments[0].Clicks = 99
+	if err := validateStatistics(day, time.Now()); err == nil {
+		t.Fatal("click total greater than events accepted")
+	}
+}

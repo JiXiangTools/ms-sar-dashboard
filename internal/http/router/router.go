@@ -84,6 +84,15 @@ func New(cfg config.Config, logger *log.Logger, deps Dependencies) *gin.Engine {
 		authorized := api.Group("")
 		authorized.Use(middleware.AdminAuth(deps.Services.Auth, metricRegistry))
 		{
+			if deps.Services.Recommendation != nil {
+				rec := handler.NewRecommendationHandler(deps.Services.Recommendation)
+				authorized.GET("/recommendation/sources", rec.Sources)
+				authorized.POST("/recommendation/sources", rec.SaveSource)
+				authorized.GET("/recommendation/apps/:appid", rec.Workspace)
+				authorized.POST("/recommendation/apps/:appid/strategies", rec.SaveStrategy)
+				authorized.POST("/recommendation/apps/:appid/experiments", rec.SaveExperiment)
+				authorized.POST("/recommendation/apps/:appid/publication", rec.Publish)
+			}
 			authorized.POST("/auth/logout", adminHandler.Logout)
 			authorized.GET("/app", adminHandler.ListApps)
 			authorized.POST("/app", adminHandler.CreateApp)

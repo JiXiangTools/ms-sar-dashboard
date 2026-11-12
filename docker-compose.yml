@@ -17,10 +17,12 @@ services:
       MSSAR_AUTH_JWT_SECRET: "${MSSAR_AUTH_JWT_SECRET:?MSSAR_AUTH_JWT_SECRET is required}"
       MSSAR_DATABASE_DSN: "${MSSAR_DATABASE_DSN:?MSSAR_DATABASE_DSN is required}"
       MSSAR_DATABASE_MIGRATION_TIMEOUT: "${MSSAR_DATABASE_MIGRATION_TIMEOUT:-60s}"
-      MSSAR_REDIS_MODE: standalone
-      MSSAR_REDIS_KEY_PREFIX: ""
-      MSSAR_REDIS_ADDRS: redis:6379
-      MSSAR_REDIS_DB: "8"
+      MSSAR_REDIS_MODE: "${MSSAR_REDIS_MODE:-cluster}"
+      MSSAR_REDIS_KEY_PREFIX: "${MSSAR_REDIS_KEY_PREFIX:-}"
+      MSSAR_REDIS_ADDRS: "${MSSAR_REDIS_ADDRS:?shared recommendation Redis addresses are required}"
+      MSSAR_REDIS_USERNAME: "${MSSAR_REDIS_USERNAME:-}"
+      MSSAR_REDIS_PASSWORD: "${MSSAR_REDIS_PASSWORD:-}"
+      MSSAR_REDIS_DB: "0"
     command:
       - -config
       - /app/configs/prod.yaml
@@ -30,8 +32,6 @@ services:
       database-migrate:
         condition: service_completed_successfully
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test:
@@ -76,25 +76,5 @@ services:
       retries: 5
       start_period: 10s
 
-  redis:
-    image: "${REDIS_IMAGE:-dockerhub.seobot.cc/library/redis:8.6.1}"
-    container_name: ms-sar-dashboard-redis
-    restart: unless-stopped
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - redis-cli ping | grep PONG
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
 volumes:
   postgres-data:
-  redis-data:

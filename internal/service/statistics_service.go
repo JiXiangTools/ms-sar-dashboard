@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"sort"
 	"strconv"
 	"time"
 	_ "time/tzdata"
@@ -37,15 +38,17 @@ type StatisticsPoint struct {
 	Partial       bool                     `json:"partial"`
 }
 type StatisticsResult struct {
-	AppID          string                     `json:"appid"`
-	Timezone       string                     `json:"timezone"`
-	Granularity    string                     `json:"granularity"`
-	Snapshot       *domain.StatisticsSnapshot `json:"snapshot"`
-	Summary        domain.StatisticsCounts    `json:"summary"`
-	CTR            *float64                   `json:"ctr"`
-	Points         []StatisticsPoint          `json:"points"`
-	MissingBuckets int                        `json:"missing_buckets"`
-	Stale          bool                       `json:"stale"`
+	Experiments        []domain.ExperimentStatistics `json:"experiments"`
+	AttributionQuality map[string]int64              `json:"attribution_quality"`
+	AppID              string                        `json:"appid"`
+	Timezone           string                        `json:"timezone"`
+	Granularity        string                        `json:"granularity"`
+	Snapshot           *domain.StatisticsSnapshot    `json:"snapshot"`
+	Summary            domain.StatisticsCounts       `json:"summary"`
+	CTR                *float64                      `json:"ctr"`
+	Points             []StatisticsPoint             `json:"points"`
+	MissingBuckets     int                           `json:"missing_buckets"`
+	Stale              bool                          `json:"stale"`
 }
 
 func (s *StatisticsService) Put(ctx context.Context, pathAppID, pathDate string, input domain.StatisticsDay) (bool, error) {
@@ -75,7 +78,7 @@ func validateStatistics(v domain.StatisticsDay, now time.Time) error {
 		return invalid
 	}
 	day, err := time.ParseInLocation(time.DateOnly, v.Date, statisticsLocation)
-	if err != nil || v.SchemaVersion != 1 || v.Timezone != StatisticsTimezone || v.Revision <= 0 || v.Revision > 9007199254740991 {
+	if err != nil || (v.SchemaVersion != 1 && v.SchemaVersion != 2) || v.Timezone != StatisticsTimezone || v.Revision <= 0 || v.Revision > 9007199254740991 {
 		return invalid
 	}
 	if v.GeneratedAt < day.Unix() || v.GeneratedAt > now.Unix()+300 || len(v.Hours) != 24 {
@@ -111,6 +114,32 @@ func validateStatistics(v domain.StatisticsDay, now time.Time) error {
 	}
 	if !equalStatisticsCounts(summed, v.Counts) {
 		return errors.New("statistics totals must equal hourly totals")
+	}
+	if len(v.Experiments) > 1000 || len(v.AttributionQuality) > 3 {
+		return invalid
+	}
+	seen := map[string]bool{}
+	for _, g := range v.Experiments {
+		key := g.ExperimentID + ":" + strconv.FormatInt(g.ExperimentVersion, 10) + ":" + g.StrategyID
+		if !domain.RecommendationIDPattern.MatchString(g.ExperimentID) || !domain.StrategyIDPattern.MatchString(g.StrategyID) || g.ExperimentVersion < 1 || seen[key] || g.Events == nil || len(g.Events) > 64 || g.Exposures > g.Events["show"] || g.Clicks > g.Events["click"] {
+			return invalid
+		}
+		seen[key] = true
+		for _, n := range []int64{g.Recommendations, g.Exposures, g.Clicks} {
+			if n < 0 || n > 1e12 {
+				return invalid
+			}
+		}
+		for action, n := range g.Events {
+			if !statisticsEventPattern.MatchString(action) || n < 0 || n > 1e12 {
+				return invalid
+			}
+		}
+	}
+	for kind, n := range v.AttributionQuality {
+		if (kind != "missing_decision" && kind != "metadata_mismatch" && kind != "item_mismatch") || n < 0 || n > 1e12 {
+			return invalid
+		}
 	}
 	return nil
 }
@@ -173,7 +202,7 @@ func statisticsCTR(c domain.StatisticsCounts) *float64 {
 }
 
 func (s *StatisticsService) Query(ctx context.Context, appID, from, to, granularity string) (StatisticsResult, error) {
-	result := StatisticsResult{AppID: appID, Timezone: StatisticsTimezone, Granularity: granularity, Summary: emptyStatisticsCounts(), Points: []StatisticsPoint{}}
+	result := StatisticsResult{AppID: appID, Timezone: StatisticsTimezone, Granularity: granularity, Summary: emptyStatisticsCounts(), Points: []StatisticsPoint{}, Experiments: []domain.ExperimentStatistics{}, AttributionQuality: map[string]int64{}}
 	appid, err := strconv.ParseInt(appID, 10, 64)
 	if err != nil || appid <= 0 || strconv.FormatInt(appid, 10) != appID {
 		return result, apperror.BadRequest("invalid appid", nil)
@@ -193,8 +222,33 @@ func (s *StatisticsService) Query(ctx context.Context, appID, from, to, granular
 	result.Snapshot = snapshot
 	result.Stale = snapshot == nil || time.Now().Unix()-snapshot.GeneratedAt > 1800
 	indexed := map[string]domain.StatisticsDay{}
+	groups := map[string]*domain.ExperimentStatistics{}
 	for _, d := range days {
 		indexed[d.Date] = d
+		for kind, n := range d.AttributionQuality {
+			result.AttributionQuality[kind] += n
+		}
+		for _, g := range d.Experiments {
+			key := g.ExperimentID + ":" + strconv.FormatInt(g.ExperimentVersion, 10) + ":" + g.StrategyID
+			if groups[key] == nil {
+				groups[key] = &domain.ExperimentStatistics{ExperimentID: g.ExperimentID, ExperimentVersion: g.ExperimentVersion, StrategyID: g.StrategyID, Events: map[string]int64{}}
+			}
+			v := groups[key]
+			v.Recommendations += g.Recommendations
+			v.Exposures += g.Exposures
+			v.Clicks += g.Clicks
+			for action, n := range g.Events {
+				v.Events[action] += n
+			}
+		}
+	}
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result.Experiments = append(result.Experiments, *groups[key])
 	}
 	for date := start; !date.After(end); date = date.AddDate(0, 0, 1) {
 		d, exists := indexed[date.Format(time.DateOnly)]

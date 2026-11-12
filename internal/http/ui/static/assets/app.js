@@ -2,6 +2,7 @@ const storageKey = "mssar.admin.session";
 const pageSize = 10;
 
 const viewConfigs = {
+	 experiments: { kicker: "推荐配置", title: "推荐实验", actions: ["refresh"] },
   statistics: { kicker: "数据统计", title: "数据统计", actions: ["refresh"] },
   apps: {
     kicker: "应用授权",
@@ -168,6 +169,7 @@ function restoreSession() {
 }
 
 function clearSession() {
+	 recommendationReset();
   statisticsReset();
   state.accessToken = "";
   state.adminID = 0;
@@ -412,6 +414,7 @@ function getQueryString(view) {
 }
 
 async function loadActiveView(force = false) {
+	if (state.activeView === "experiments") { await loadRecommendation(force); return; }
   if (state.activeView === "statistics") { await loadStatistics(force); return; }
   const config = viewConfigs[state.activeView];
   if (!hasSession() || !config.endpoint) {
@@ -598,6 +601,7 @@ function renderSecretRevealPanel() {
 }
 
 function renderFilters() {
+	if (state.activeView === "experiments" && hasSession()) { renderRecommendationFilters(); return; }
   if (state.activeView === "statistics" && hasSession()) { renderStatisticsFilters(); return; }
   const config = viewConfigs[state.activeView];
   if (!hasSession() || !config.filters?.length) {
@@ -674,6 +678,7 @@ function renderTable() {
     return;
   }
   if (state.activeView === "statistics") { renderStatistics(); return; }
+	if (state.activeView === "experiments") { renderRecommendation(); return; }
   if (state.activeView === "apps") {
     renderAppsTable();
     return;
@@ -1238,6 +1243,7 @@ function bindAuthEvents() {
 }
 
 function bindWorkspaceEvents() {
+	bindRecommendationEvents();
   filterBar.addEventListener("click", event => {
     const button = event.target.closest("button[data-stat-days]");
     if (!button) return;
@@ -1283,6 +1289,12 @@ function bindWorkspaceEvents() {
       loadStatistics(true);
       return;
     }
+	if (state.activeView === "experiments") {
+	  recommendationState.appid = String(readFormData(form).appid || "");
+	  recommendationState.draft = null;
+	  loadRecommendation(true);
+	  return;
+	}
     state.filters[state.activeView] = readFormData(form);
     state.page[state.activeView] = 1;
     state.data[state.activeView] = null;

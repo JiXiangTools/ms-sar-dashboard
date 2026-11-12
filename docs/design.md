@@ -2,16 +2,17 @@
 
 ## 1. 设计原则
 
-按第一性原理，本项目只需要解决四件事：
+本项目负责：
 
 - 让管理员登录 dashboard，并留下登录日志。
 - 让管理员维护应用授权信息。
 - 让 `ms-data-receiver`、`ms-rec-online`、`ms-search-online` 用同一套授权方式访问。
 - 给搜索和推荐链路提供只读 debug 页面。
+- 管理推荐策略和不可变实验版本，发布共享 Redis 配置，并展示版本化效果统计。
 
 按奥卡姆剃刀，首期只保留一个事实源、一个在线授权入口、两种身份：
 
-- PostgreSQL 是管理端事实源：管理员、应用、审计日志都在数据库。
+- PostgreSQL 是管理端事实源：管理员、应用、审计日志、推荐配置历史与统计都在数据库。
 - dashboard 授权 API 是在线服务唯一授权入口；dashboard 内部维护 Redis 授权投影 `app_auth_{appid}` 和 `app_auth_allappids`。
 - 管理端身份使用账号密码登录后签发短期 JWT。
 - 可选接入 `ms-user-center` 的 CAS 单点登录；CAS 换票成功后仍由 dashboard 签发本地短期 JWT。
@@ -44,12 +45,12 @@ Redis 支持单点（`standalone`/`single`）、Cluster 和 Sentinel；Cluster �
 非目标：
 
 - 不改变 `ms-data-receiver` 商品/行为上报字段、Kafka 消息格式和下游契约。
-- 不改变 `ms-rec-online` 推荐结果格式。
+- 推荐响应新增 rec_id 和 extra，普通内容及独立广告字段保持兼容；详见 [推荐实验](recommendation.md)。
 - 不改变 `ms-search-online` ES 索引字段语义和搜索响应结构。
 - 不把客户端上报数据写入 dashboard 数据库。
 - 不在数据库或 Redis 中保存管理端 token。
 - 不提供 ES 写入、删除、重建索引能力。
-- 不提供推荐 Redis 写入或删除能力。
+- 推荐 Debug 保持只读；配置发布可写入最新应用策略投影，不写入或删除推荐算法结果。
 
 ## 3. 总体架构
 

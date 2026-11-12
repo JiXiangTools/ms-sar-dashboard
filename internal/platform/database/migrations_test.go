@@ -20,7 +20,7 @@ func TestEmbeddedMigrationsAreVersionedAndNonDestructive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load migrations: %v", err)
 	}
-	if len(items) != 2 || items[0].Version != 1 || items[0].Name != "initial" {
+	if len(items) != 3 || items[0].Version != 1 || items[0].Name != "initial" {
 		t.Fatalf("unexpected migrations: %+v", items)
 	}
 	if len(items[0].Checksum) != 64 {
@@ -148,11 +148,11 @@ func TestMigrateIntegrationConcurrentLegacyAdoption(t *testing.T) {
 	appliedCount := 0
 	for result := range results {
 		appliedCount += len(result.AppliedVersions)
-		if result.CurrentVersion != 2 {
+		if result.CurrentVersion != 3 {
 			t.Errorf("unexpected current version: %+v", result)
 		}
 	}
-	if appliedCount != 2 {
+	if appliedCount != 3 {
 		t.Fatalf("migration must be applied exactly once, got %d applications", appliedCount)
 	}
 
@@ -160,7 +160,7 @@ func TestMigrateIntegrationConcurrentLegacyAdoption(t *testing.T) {
 	if err := testDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationRows); err != nil {
 		t.Fatalf("count schema migrations: %v", err)
 	}
-	if migrationRows != 2 {
+	if migrationRows != 3 {
 		t.Fatalf("expected two migration rows, got %d", migrationRows)
 	}
 	var legacySecret string

@@ -40,7 +40,7 @@ database:
   migration_timeout: 60s
 
 redis:
-  mode: standalone
+  mode: cluster
   addrs: []
   key_prefix: ""
   db: 0

@@ -39,6 +39,7 @@ type App struct {
 	elasticsearch *elasticsearch.Client
 
 	backgroundCancel context.CancelFunc
+	recommendation   *service.RecommendationService
 }
 
 func New(opts Options) (*App, error) {
@@ -113,12 +114,13 @@ func New(opts Options) (*App, error) {
 	}
 
 	return &App{
-		cfg:           cfg,
-		logger:        logger,
-		httpServer:    httpServer,
-		database:      databaseClient,
-		cache:         cacheClient,
-		elasticsearch: esClient,
+		recommendation: services.Recommendation,
+		cfg:            cfg,
+		logger:         logger,
+		httpServer:     httpServer,
+		database:       databaseClient,
+		cache:          cacheClient,
+		elasticsearch:  esClient,
 	}, nil
 }
 
@@ -132,6 +134,14 @@ func outcome(err error) appmetrics.Outcome {
 func (a *App) Run() error {
 	backgroundCtx, cancel := context.WithCancel(context.Background())
 	a.backgroundCancel = cancel
+	if a.recommendation != nil {
+		startupCtx, startupCancel := context.WithTimeout(backgroundCtx, 10*time.Second)
+		if err := a.recommendation.Reconcile(startupCtx, true); err != nil {
+			a.logger.Printf("recommendation configuration recovery pending: %v", err)
+		}
+		startupCancel()
+		go a.recommendation.Run(backgroundCtx)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

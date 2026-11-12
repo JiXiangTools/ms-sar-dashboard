@@ -47,7 +47,7 @@ func TestAdminUIEndpointServesLoginEntry(t *testing.T) {
 		"管理员登录",
 		`id="login-error"`,
 		`id="session-panel"`,
-		`/sar-admin/assets/app.js?v=20260710-security`,
+		`/sar-admin/assets/app.js?v=20261112-experiments`,
 		`<meta name="referrer" content="no-referrer" />`,
 	}
 	for _, value := range required {
