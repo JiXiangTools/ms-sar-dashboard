@@ -9,7 +9,12 @@ import (
 	"time"
 )
 
-const RecommendationSchemaVersion = 1
+const RecommendationSchemaVersion = 2
+
+const (
+	RecommendationPersonalized = "personalized"
+	RecommendationRelated      = "related"
+)
 
 var StrategyIDPattern = regexp.MustCompile(`^[a-z][a-z_]{0,9}$`)
 var RecommendationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
@@ -40,16 +45,29 @@ type StrategyNewest struct {
 	Scenes       []string `json:"scenes"`
 }
 
+func (n StrategyNewest) IsZero() bool {
+	return n.SourceID == "" && n.SharePercent == 0 && len(n.Scenes) == 0
+}
+
 type RecommendationStrategy struct {
-	AppID            string           `json:"appid"`
-	StrategyID       string           `json:"strategy_id"`
-	Version          int64            `json:"version"`
-	Name             string           `json:"name"`
-	Recall           []StrategyRecall `json:"recall"`
-	FallbackSourceID string           `json:"fallback_source_id"`
-	Newest           StrategyNewest   `json:"newest"`
-	Rank             string           `json:"rank"`
-	CreatedAt        time.Time        `json:"created_at"`
+	RecommendationType string           `json:"recommendation_type,omitempty"`
+	AppID              string           `json:"appid"`
+	StrategyID         string           `json:"strategy_id"`
+	Version            int64            `json:"version"`
+	Name               string           `json:"name"`
+	Recall             []StrategyRecall `json:"recall"`
+	FallbackSourceID   string           `json:"fallback_source_id"`
+	Newest             StrategyNewest   `json:"newest,omitzero"` // Read-only compatibility for historical versions.
+	Rank               string           `json:"rank"`
+	CreatedAt          time.Time        `json:"created_at"`
+}
+
+// Old immutable snapshots predate strategy types and remain personalized.
+func (s RecommendationStrategy) EffectiveType() string {
+	if s.RecommendationType == "" {
+		return RecommendationPersonalized
+	}
+	return s.RecommendationType
 }
 
 type ExperimentAssignment struct {
@@ -57,6 +75,11 @@ type ExperimentAssignment struct {
 	StrategyVersion int64  `json:"strategy_version"`
 	BucketStart     int    `json:"bucket_start"`
 	BucketEnd       int    `json:"bucket_end"`
+}
+
+type ExperimentControl struct {
+	StrategyID      string `json:"strategy_id"`
+	StrategyVersion int64  `json:"strategy_version"`
 }
 
 type RecommendationExperiment struct {
@@ -68,6 +91,7 @@ type RecommendationExperiment struct {
 	BucketAlgorithm string                 `json:"bucket_algorithm"`
 	Salt            string                 `json:"salt"`
 	Assignments     []ExperimentAssignment `json:"assignments"`
+	Controls        []ExperimentControl    `json:"controls,omitempty"`
 }
 
 type ExperimentVersion struct {
@@ -138,6 +162,9 @@ func ValidateRecallSource(s RecallSource) error {
 	if s.Kind == "user" && s.Producer != "external" {
 		return errors.New("user recall requires an external producer")
 	}
+	if s.Producer == "external" && strings.HasPrefix(s.KeyTemplate, "hot_") {
+		return errors.New("hot_ keys are reserved for period rankings and nearline newest")
+	}
 	if (s.Producer == "icf" || s.Producer == "ir" || s.Producer == "nl") && s.Kind != "item" {
 		return errors.New("similarity producers require an item source")
 	}
@@ -148,16 +175,36 @@ func ValidateRecallSource(s RecallSource) error {
 		if !map[string]bool{"hour": true, "day": true, "week": true, "month": true, "quarter": true, "all": true, "newest": true}[s.HotPeriod] {
 			return errors.New("hot producer requires a valid hot_period")
 		}
+		if s.KeyTemplate != "hot_{appid}_"+s.HotPeriod {
+			return errors.New("hot sources must use hot_{appid}_<hot_period>; newest is maintained by nearline")
+		}
 	} else if s.HotPeriod != "" {
 		return errors.New("hot_period is only valid for a hot producer")
 	}
 	if s.Producer != "external" && !strings.HasPrefix(s.KeyTemplate, s.Producer+"_") {
 		return errors.New("built-in producer templates must start with the producer name followed by an underscore")
 	}
+	if !strings.Contains(s.KeyTemplate, "_{appid}_") && !strings.HasSuffix(s.KeyTemplate, "_{appid}") && !strings.HasPrefix(s.KeyTemplate, "{appid}_") {
+		return errors.New("{appid} must be a separate underscore-delimited key segment")
+	}
 	return nil
 }
 
 func ValidateRecommendationStrategy(s RecommendationStrategy, sources map[string]RecallSource) error {
+	if !s.Newest.IsZero() {
+		return errors.New("configure newest as a recall source with weight and recall_rate, not a separate newest stage")
+	}
+	return ValidatePublishedRecommendationStrategy(s, sources)
+}
+
+// Historical snapshots retain their original behavior; new definitions use recall.
+func ValidatePublishedRecommendationStrategy(s RecommendationStrategy, sources map[string]RecallSource) error {
+	if s.EffectiveType() != RecommendationPersonalized && s.EffectiveType() != RecommendationRelated {
+		return errors.New("recommendation_type must be personalized or related")
+	}
+	if s.EffectiveType() == RecommendationRelated && (s.FallbackSourceID != "" || s.Newest.SourceID != "" || s.Newest.SharePercent != 0 || len(s.Newest.Scenes) != 0) {
+		return errors.New("related strategies support recall and rank only; fallback and a separate newest stage are not allowed")
+	}
 	if !StrategyIDPattern.MatchString(s.StrategyID) || s.StrategyID == "default" || strings.TrimSpace(s.Name) == "" || len([]rune(s.Name)) > 64 {
 		return errors.New("strategy id must be 1–10 lowercase letters/underscores, start with a letter, and not be default")
 	}
@@ -206,19 +253,77 @@ func ValidateRecommendationExperiment(e RecommendationExperiment) error {
 	if len(e.Salt) > 64 || len(e.Assignments) == 0 || len(e.Assignments) > 32 {
 		return errors.New("invalid experiment salt or assignments")
 	}
-	used := [100]bool{}
 	strategies := map[string]bool{}
 	for _, a := range e.Assignments {
 		if !StrategyIDPattern.MatchString(a.StrategyID) || a.StrategyID == "default" || strategies[a.StrategyID] || a.BucketStart < 0 || a.BucketEnd > 99 || a.BucketEnd < a.BucketStart || a.BucketEnd-a.BucketStart+1 > 99 {
 			return errors.New("each strategy requires a unique, non-overlapping range of 1–99 buckets within 0–99")
 		}
 		strategies[a.StrategyID] = true
-		for b := a.BucketStart; b <= a.BucketEnd; b++ {
-			if used[b] {
-				return errors.New("bucket ranges overlap")
-			}
-			used[b] = true
+	}
+	if len(e.Controls) > 2 {
+		return errors.New("select at most one control strategy per recommendation type")
+	}
+	for _, control := range e.Controls {
+		if !StrategyIDPattern.MatchString(control.StrategyID) || control.StrategyID == "default" || control.StrategyVersion < 0 || strategies[control.StrategyID] {
+			return errors.New("control strategies must be distinct from treatment strategies and each other")
 		}
+		strategies[control.StrategyID] = true
+	}
+	return nil
+}
+
+// Schema v2 pins the default/control flow as well as each treatment flow.
+func ValidateRecommendationControls(e RecommendationExperiment, strategies map[string]RecommendationStrategy) error {
+	participating := map[string]bool{}
+	for _, assignment := range e.Assignments {
+		strategy, ok := strategies[assignment.StrategyID]
+		if !ok {
+			return errors.New("missing treatment strategy")
+		}
+		participating[strategy.EffectiveType()] = true
+	}
+	controls := map[string]bool{}
+	for _, reference := range e.Controls {
+		strategy, ok := strategies[reference.StrategyID]
+		if !ok || strategy.Version != reference.StrategyVersion {
+			return errors.New("control references missing strategy version")
+		}
+		kind := strategy.EffectiveType()
+		if !participating[kind] || controls[kind] {
+			return errors.New("select exactly one control for each participating recommendation type")
+		}
+		controls[kind] = true
+	}
+	if len(controls) != len(participating) {
+		return errors.New("each participating recommendation type requires a pinned control strategy")
+	}
+	return nil
+}
+
+// A single App experiment can allocate both interfaces independently. Resolve
+// the pinned strategy versions before checking ranges, never the latest edits.
+func ValidateRecommendationAssignments(e RecommendationExperiment, strategies map[string]RecommendationStrategy) error {
+	if err := ValidateRecommendationExperiment(e); err != nil {
+		return err
+	}
+	used := map[string][100]bool{}
+	for _, a := range e.Assignments {
+		strategy, ok := strategies[a.StrategyID]
+		if !ok || strategy.Version != a.StrategyVersion {
+			return errors.New("assignment references missing strategy version")
+		}
+		kind := strategy.EffectiveType()
+		if kind != RecommendationPersonalized && kind != RecommendationRelated {
+			return errors.New("invalid recommendation type in assignment")
+		}
+		buckets := used[kind]
+		for bucket := a.BucketStart; bucket <= a.BucketEnd; bucket++ {
+			if buckets[bucket] {
+				return errors.New("bucket ranges overlap within recommendation type " + kind)
+			}
+			buckets[bucket] = true
+		}
+		used[kind] = buckets
 	}
 	return nil
 }

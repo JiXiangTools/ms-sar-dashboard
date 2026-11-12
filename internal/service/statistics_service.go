@@ -120,7 +120,10 @@ func validateStatistics(v domain.StatisticsDay, now time.Time) error {
 	}
 	seen := map[string]bool{}
 	for _, g := range v.Experiments {
-		key := g.ExperimentID + ":" + strconv.FormatInt(g.ExperimentVersion, 10) + ":" + g.StrategyID
+		key := g.ExperimentID + ":" + strconv.FormatInt(g.ExperimentVersion, 10) + ":" + g.StrategyID + ":" + g.RecommendationType
+		if g.RecommendationType != "" && g.RecommendationType != domain.RecommendationPersonalized && g.RecommendationType != domain.RecommendationRelated && g.RecommendationType != "hot" {
+			return invalid
+		}
 		if !domain.RecommendationIDPattern.MatchString(g.ExperimentID) || !domain.StrategyIDPattern.MatchString(g.StrategyID) || g.ExperimentVersion < 1 || seen[key] || g.Events == nil || len(g.Events) > 64 || g.Exposures > g.Events["show"] || g.Clicks > g.Events["click"] {
 			return invalid
 		}
@@ -229,9 +232,9 @@ func (s *StatisticsService) Query(ctx context.Context, appID, from, to, granular
 			result.AttributionQuality[kind] += n
 		}
 		for _, g := range d.Experiments {
-			key := g.ExperimentID + ":" + strconv.FormatInt(g.ExperimentVersion, 10) + ":" + g.StrategyID
+			key := g.ExperimentID + ":" + strconv.FormatInt(g.ExperimentVersion, 10) + ":" + g.StrategyID + ":" + g.RecommendationType
 			if groups[key] == nil {
-				groups[key] = &domain.ExperimentStatistics{ExperimentID: g.ExperimentID, ExperimentVersion: g.ExperimentVersion, StrategyID: g.StrategyID, Events: map[string]int64{}}
+				groups[key] = &domain.ExperimentStatistics{RecommendationType: g.RecommendationType, ExperimentID: g.ExperimentID, ExperimentVersion: g.ExperimentVersion, StrategyID: g.StrategyID, Events: map[string]int64{}}
 			}
 			v := groups[key]
 			v.Recommendations += g.Recommendations

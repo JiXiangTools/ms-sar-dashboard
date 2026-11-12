@@ -32,6 +32,9 @@ func NewRecommendationService(repo *repository.Repository, client redis.Universa
 }
 
 func recommendationError(err error) error {
+	if errors.Is(err, repository.ErrInvalidRecommendationConfiguration) {
+		return apperror.BadRequest(err.Error(), nil)
+	}
 	if errors.Is(err, repository.ErrConflict) {
 		return apperror.Conflict("configuration changed; reload before creating or publishing a new version", err)
 	}
@@ -70,13 +73,15 @@ type RecommendationWorkspace struct {
 // A reusable definition has several execution intervals, one for each experiment
 // version that references it. An ended interval never changes on later reuse.
 type RecommendationStrategyHistory struct {
-	StrategyID        string     `json:"strategy_id"`
-	StrategyVersion   int64      `json:"strategy_version"`
-	ExperimentID      string     `json:"experiment_id"`
-	ExperimentVersion int64      `json:"experiment_version"`
-	CreatedAt         time.Time  `json:"created_at"`
-	StartedAt         *time.Time `json:"started_at"`
-	EndedAt           *time.Time `json:"ended_at"`
+	RecommendationType string     `json:"recommendation_type"`
+	StrategyID         string     `json:"strategy_id"`
+	StrategyVersion    int64      `json:"strategy_version"`
+	GroupID            string     `json:"group_id"`
+	ExperimentID       string     `json:"experiment_id"`
+	ExperimentVersion  int64      `json:"experiment_version"`
+	CreatedAt          time.Time  `json:"created_at"`
+	StartedAt          *time.Time `json:"started_at"`
+	EndedAt            *time.Time `json:"ended_at"`
 }
 
 func validRecommendationAppID(v string) bool {
@@ -106,7 +111,13 @@ func (s *RecommendationService) Workspace(ctx context.Context, appid string) (Re
 	out.StrategyHistory = []RecommendationStrategyHistory{}
 	for _, e := range out.Experiments {
 		for _, strategy := range e.Snapshot.Strategies {
-			out.StrategyHistory = append(out.StrategyHistory, RecommendationStrategyHistory{StrategyID: strategy.StrategyID, StrategyVersion: strategy.Version, ExperimentID: e.ExperimentID, ExperimentVersion: e.Version, CreatedAt: strategy.CreatedAt, StartedAt: e.StartedAt, EndedAt: e.EndedAt})
+			group := strategy.StrategyID
+			for _, control := range e.Controls {
+				if control.StrategyID == strategy.StrategyID {
+					group = "default"
+				}
+			}
+			out.StrategyHistory = append(out.StrategyHistory, RecommendationStrategyHistory{RecommendationType: strategy.EffectiveType(), StrategyID: strategy.StrategyID, StrategyVersion: strategy.Version, GroupID: group, ExperimentID: e.ExperimentID, ExperimentVersion: e.Version, CreatedAt: strategy.CreatedAt, StartedAt: e.StartedAt, EndedAt: e.EndedAt})
 		}
 	}
 	out.Publication, err = s.repo.RecommendationPublication(ctx, appid)
@@ -154,7 +165,11 @@ func (s *RecommendationService) SaveExperiment(ctx context.Context, adminID int6
 	for _, v := range strategies {
 		byID[v.StrategyID] = v
 	}
+	references := append([]domain.ExperimentControl(nil), e.Controls...)
 	for _, a := range e.Assignments {
+		references = append(references, domain.ExperimentControl{StrategyID: a.StrategyID, StrategyVersion: a.StrategyVersion})
+	}
+	for _, a := range references {
 		v, ok := byID[a.StrategyID]
 		if !ok || a.StrategyVersion < 0 || a.StrategyVersion > v.Version {
 			return zero, apperror.BadRequest("unknown strategy version", nil)
@@ -168,11 +183,17 @@ func (s *RecommendationService) SaveExperiment(ctx context.Context, adminID int6
 }
 
 var publishRecommendationScript = redis.NewScript(`
-local old = redis.call('GET', KEYS[1])
+local old = false
+if redis.call('TYPE', KEYS[1]).ok == 'string' then old = redis.call('GET', KEYS[1]) end
 if old then
-  local current = cjson.decode(old)
-  if tonumber(current.revision) > tonumber(ARGV[1]) then return redis.error_reply('newer configuration already published') end
-  if tonumber(current.revision) == tonumber(ARGV[1]) then return tostring(current.published_at) end
+  local ok, current = pcall(cjson.decode, old)
+  if ok and type(current) == 'table' and current.appid == ARGV[4] and type(current.revision) == 'number' then
+    if current.revision > tonumber(ARGV[1]) then return redis.error_reply('newer configuration already published') end
+    if ARGV[5] == '1' and current.revision == tonumber(ARGV[1]) and type(current.published_at) == 'number' and current.published_at > 0 and current.published_at ~= tonumber(ARGV[3]) then
+      return tostring(current.published_at)
+    end
+  end
+  if old == ARGV[2] then return ARGV[3] end
 end
 redis.call('SET', KEYS[1], ARGV[2])
 return ARGV[3]
@@ -180,18 +201,30 @@ return ARGV[3]
 
 func (s *RecommendationService) publish(ctx context.Context, appid string) error {
 	return s.repo.PublishRecommendation(ctx, appid, func(c domain.RecommendationConfig) (int64, error) {
+		preserveUnconfirmedAt := 0
 		if c.PublishedAt == 0 {
+			preserveUnconfirmedAt = 1
 			c.PublishedAt = time.Now().Unix()
 		}
-		raw, err := json.Marshal(c)
-		if err != nil {
-			return 0, err
+		for attempt := 0; attempt < 2; attempt++ {
+			raw, err := json.Marshal(c)
+			if err != nil {
+				return 0, err
+			}
+			value, err := publishRecommendationScript.Run(ctx, s.redis, []string{s.prefix + "rec:appconf:{" + appid + "}"}, c.Revision, string(raw), c.PublishedAt, appid, preserveUnconfirmedAt).Text()
+			if err != nil {
+				return 0, err
+			}
+			at, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return 0, err
+			}
+			if at == c.PublishedAt {
+				return at, nil
+			}
+			c.PublishedAt = at
 		}
-		value, err := publishRecommendationScript.Run(ctx, s.redis, []string{s.prefix + "rec:appconf:{" + appid + "}"}, c.Revision, string(raw), c.PublishedAt).Text()
-		if err != nil {
-			return 0, err
-		}
-		return strconv.ParseInt(value, 10, 64)
+		return 0, errors.New("publication timestamp changed during retry")
 	})
 }
 
@@ -234,19 +267,28 @@ func (s *RecommendationService) Reconcile(ctx context.Context, all bool) error {
 }
 
 func (s *RecommendationService) Run(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	s.run(ctx, 5*time.Second, time.Minute)
+}
+
+func (s *RecommendationService) run(ctx context.Context, retryEvery, replayEvery time.Duration) {
+	ticker := time.NewTicker(retryEvery)
 	defer ticker.Stop()
+	replay := time.NewTicker(replayEvery)
+	defer replay.Stop()
 	for {
+		all := s.recoveryPending.Load()
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := s.Reconcile(refreshCtx, s.recoveryPending.Load())
-			cancel()
-			if err != nil && s.logger != nil {
-				s.logger.Printf("recommendation publication retry failed: %v", err)
-			}
+		case <-replay.C:
+			all = true
+		}
+		refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := s.Reconcile(refreshCtx, all)
+		cancel()
+		if err != nil && s.logger != nil {
+			s.logger.Printf("recommendation publication retry failed: %v", err)
 		}
 	}
 }

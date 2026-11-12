@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
 	"gorm.io/gorm"
 )
+
+var ErrInvalidRecommendationConfiguration = errors.New("invalid recommendation configuration")
 
 func lockRecommendationApp(tx *gorm.DB, appid string) error {
 	var row appModel
@@ -82,6 +85,9 @@ func (r *Repository) RecommendationStrategies(ctx context.Context, appid string)
 }
 
 func (r *Repository) SaveRecommendationStrategy(ctx context.Context, s domain.RecommendationStrategy) (domain.RecommendationStrategy, error) {
+	if s.RecommendationType == "" {
+		s.RecommendationType = domain.RecommendationPersonalized
+	}
 	err := r.transaction(ctx, func(tx *gorm.DB) error {
 		if err := lockRecommendationApp(tx, s.AppID); err != nil {
 			return err
@@ -118,6 +124,7 @@ func (r *Repository) SaveRecommendationStrategy(ctx context.Context, s domain.Re
 func (r *Repository) SaveRecommendationExperiment(ctx context.Context, e domain.RecommendationExperiment) (domain.ExperimentVersion, error) {
 	var saved domain.ExperimentVersion
 	e.Assignments = append([]domain.ExperimentAssignment(nil), e.Assignments...)
+	e.Controls = append([]domain.ExperimentControl(nil), e.Controls...)
 	err := r.transaction(ctx, func(tx *gorm.DB) error {
 		if err := lockRecommendationApp(tx, e.AppID); err != nil {
 			return err
@@ -138,9 +145,15 @@ func (r *Repository) SaveRecommendationExperiment(ctx context.Context, e domain.
 		for _, s := range sources {
 			sourceMap[s.SourceID] = s
 		}
-		strategies := make([]domain.RecommendationStrategy, 0, len(e.Assignments))
+		strategies := make([]domain.RecommendationStrategy, 0, len(e.Assignments)+len(e.Controls))
+		strategyMap := map[string]domain.RecommendationStrategy{}
 		usedSources := map[string]bool{}
-		for i, a := range e.Assignments {
+		references := make([]domain.ExperimentControl, 0, len(e.Assignments)+len(e.Controls))
+		for _, assignment := range e.Assignments {
+			references = append(references, domain.ExperimentControl{StrategyID: assignment.StrategyID, StrategyVersion: assignment.StrategyVersion})
+		}
+		references = append(references, e.Controls...)
+		for i, a := range references {
 			var row struct{ Payload json.RawMessage }
 			query := "SELECT payload FROM t_rec_strategy_version WHERE appid=? AND strategy_id=?"
 			args := []any{e.AppID, a.StrategyID}
@@ -159,16 +172,27 @@ func (r *Repository) SaveRecommendationExperiment(ctx context.Context, e domain.
 			if err := json.Unmarshal(row.Payload, &s); err != nil {
 				return err
 			}
-			if err := domain.ValidateRecommendationStrategy(s, sourceMap); err != nil {
+			if err := domain.ValidatePublishedRecommendationStrategy(s, sourceMap); err != nil {
 				return err
 			}
 			strategies = append(strategies, s)
+			strategyMap[s.StrategyID] = s
 			for _, recall := range s.Recall {
 				usedSources[recall.SourceID] = true
 			}
 			usedSources[s.FallbackSourceID] = true
 			usedSources[s.Newest.SourceID] = true
-			e.Assignments[i].StrategyVersion = s.Version
+			if i < len(e.Assignments) {
+				e.Assignments[i].StrategyVersion = s.Version
+			} else {
+				e.Controls[i-len(e.Assignments)].StrategyVersion = s.Version
+			}
+		}
+		if err := domain.ValidateRecommendationAssignments(e, strategyMap); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidRecommendationConfiguration, err)
+		}
+		if err := domain.ValidateRecommendationControls(e, strategyMap); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidRecommendationConfiguration, err)
 		}
 		// Keep snapshots independent of unrelated global definitions. An app only
 		// publishes the source versions referenced by its selected strategies.

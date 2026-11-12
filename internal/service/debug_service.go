@@ -428,8 +428,9 @@ func (s *DebugService) callRecommendOnline(ctx context.Context, targetURL string
 		Status  int    `json:"status"`
 		Message string `json:"message"`
 		Data    struct {
-			ItemIDs []string `json:"item_ids"`
-			Size    int      `json:"size"`
+			Items []RecDebugItem `json:"items"`
+			RecID string         `json:"rec_id"`
+			Size  int            `json:"size"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -450,7 +451,8 @@ func (s *DebugService) callRecommendOnline(ctx context.Context, targetURL string
 	return RecDebugResult{
 		Status:  payload.Status,
 		Message: payload.Message,
-		ItemIDs: payload.Data.ItemIDs,
+		Items:   payload.Data.Items,
+		RecID:   payload.Data.RecID,
 		Size:    payload.Data.Size,
 		Raw:     raw,
 	}, nil

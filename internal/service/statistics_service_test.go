@@ -124,3 +124,32 @@ func TestStatisticsExperimentVersionsRemainSeparate(t *testing.T) {
 		t.Fatal("click total greater than events accepted")
 	}
 }
+
+func TestStatisticsRecommendationTypesRemainSeparate(t *testing.T) {
+	day := testStatisticsDay("2026-01-01", 10, 2)
+	day.SchemaVersion = 2
+	for _, recommendationType := range []string{"", domain.RecommendationPersonalized, domain.RecommendationRelated} {
+		day.Experiments = append(day.Experiments, domain.ExperimentStatistics{RecommendationType: recommendationType, ExperimentID: "exp_one", ExperimentVersion: 1, StrategyID: "default", Recommendations: 3, Exposures: 4, Clicks: 1, Events: map[string]int64{"show": 4, "click": 1}})
+	}
+	if err := validateStatistics(day, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewStatisticsService(&fakeStatisticsRepository{days: []domain.StatisticsDay{day, day}}).Query(context.Background(), "100001", day.Date, day.Date, "day")
+	if err != nil || len(result.Experiments) != 3 {
+		t.Fatalf("recommendation types were merged: %+v %v", result.Experiments, err)
+	}
+	seen := map[string]bool{}
+	for _, group := range result.Experiments {
+		seen[group.RecommendationType] = true
+		if group.Recommendations != 6 || group.Exposures != 8 || group.Clicks != 2 {
+			t.Fatalf("incorrect type aggregation: %+v", group)
+		}
+	}
+	if !seen[""] || !seen[domain.RecommendationPersonalized] || !seen[domain.RecommendationRelated] {
+		t.Fatalf("lost historical or typed groups: %+v", seen)
+	}
+	day.Experiments[0].RecommendationType = "unknown"
+	if err := validateStatistics(day, time.Now()); err == nil {
+		t.Fatal("invalid recommendation type accepted")
+	}
+}

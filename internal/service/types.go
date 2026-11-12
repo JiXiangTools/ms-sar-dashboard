@@ -79,6 +79,15 @@ type RecDebugRequest struct {
 	Exclude []string `json:"exclude"`
 }
 
+type RecDebugItem struct {
+	ItemID       string  `json:"item_id"`
+	From         string  `json:"from"`
+	SourceID     string  `json:"source_id"`
+	Ad           bool    `json:"ad"`
+	ExperimentID *string `json:"experiment_id"`
+	StrategyID   *string `json:"strategy_id"`
+}
+
 type RecDebugResult struct {
 	Type     string         `json:"type"`
 	AppID    string         `json:"appid"`
@@ -86,7 +95,8 @@ type RecDebugResult struct {
 	Params   map[string]any `json:"params"`
 	Status   int            `json:"status"`
 	Message  string         `json:"message"`
-	ItemIDs  []string       `json:"item_ids"`
+	Items    []RecDebugItem `json:"items"`
+	RecID    string         `json:"rec_id"`
 	Size     int            `json:"size"`
 	Raw      any            `json:"raw,omitempty"`
 }

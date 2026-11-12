@@ -45,7 +45,7 @@ Redis 支持单点（`standalone`/`single`）、Cluster 和 Sentinel；Cluster �
 非目标：
 
 - 不改变 `ms-data-receiver` 商品/行为上报字段、Kafka 消息格式和下游契约。
-- 推荐响应新增 rec_id 和 extra，普通内容及独立广告字段保持兼容；详见 [推荐实验](recommendation.md)。
+- 推荐响应以 rec_id 和统一 items 返回逐商品来源、广告标记及实验归属；详见 [推荐实验](recommendation.md)。
 - 不改变 `ms-search-online` ES 索引字段语义和搜索响应结构。
 - 不把客户端上报数据写入 dashboard 数据库。
 - 不在数据库或 Redis 中保存管理端 token。

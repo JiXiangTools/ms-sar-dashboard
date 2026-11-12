@@ -26,14 +26,17 @@
 .experiment-fieldset, .experiment-help { grid-column:1/-1; }
 .experiment-fieldset { margin:0; padding:16px; border:1px solid var(--line); border-radius:8px; min-width:0; }
 .experiment-recall { display:grid; grid-template-columns:minmax(160px,1fr) minmax(96px,128px) minmax(96px,128px); gap:16px; align-items:center; padding:8px 0; }
+.experiment-options { grid-template-columns:minmax(144px,1fr) minmax(144px,1fr) minmax(80px,112px) minmax(80px,112px); }
 .experiment-recall label { font-size:14px; line-height:20px; }
 .experiment-recall input[type=number] { width:100%; }
+.experiment-recall select { width:100%; min-width:0; }
 .experiment-recall input[type=checkbox] { width:auto; }
 .experiment-row-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .experiment-snapshot { overflow:auto; max-height:640px; padding:16px; background:var(--panel-soft); border:1px solid var(--line); border-radius:8px; }
 .experiment-form h4 { margin:0 0 24px; font-size:20px; line-height:28px; }
 .experiment-form .experiment-toolbar { margin-top:24px; justify-content:flex-start; }
 .experiment-form button:focus-visible, [data-rec-action]:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+@media(max-width:900px) { .experiment-options { grid-template-columns:1fr 1fr; } .experiment-options > label:first-child, .experiment-options > label:nth-child(2) { grid-column:1/-1; } }
 @media(max-width:700px) { .experiment-grid { grid-template-columns:1fr; } .experiment-recall { grid-template-columns:1fr 1fr; } .experiment-recall > label:first-child { grid-column:1/-1; } }
 
 * {
