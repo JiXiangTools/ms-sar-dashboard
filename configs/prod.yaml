@@ -65,3 +65,7 @@ recommend_debug:
 statistics:
   # Set MSSAR_STATISTICS_INGEST_TOKEN; empty disables internal ingestion.
   ingest_token: ""
+
+alert:
+  enabled: false
+  feishu_webhook_url: ""

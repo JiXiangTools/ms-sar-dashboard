@@ -12,6 +12,7 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/apperror"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/audit"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/domain"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/repository"
 	"github.com/redis/go-redis/v9"
 )
@@ -288,7 +289,7 @@ func (s *RecommendationService) run(ctx context.Context, retryEvery, replayEvery
 		err := s.Reconcile(refreshCtx, all)
 		cancel()
 		if err != nil && s.logger != nil {
-			s.logger.Printf("recommendation publication retry failed: %v", err)
+			logx.Error(s.logger, ctx, time.Now(), "recommendation.projection_retry_failed", "recommendation publication retry failed", logx.Err(err))
 		}
 	}
 }

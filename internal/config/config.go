@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,12 +14,14 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/systemalert"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/version"
 )
 
 const envPrefix = "MSSAR"
 
 type Config struct {
+	Alert          AlertConfig          `mapstructure:"alert"`
 	Statistics     StatisticsConfig     `mapstructure:"statistics"`
 	App            AppConfig            `mapstructure:"app"`
 	Security       SecurityConfig       `mapstructure:"security"`
@@ -55,6 +58,11 @@ type SecurityConfig struct {
 	MaxRequestBodyBytes   int64         `mapstructure:"max_request_body_bytes"`
 	TrustedProxyCIDRs     []string      `mapstructure:"trusted_proxy_cidrs"`
 	RateLimitStoreTimeout time.Duration `mapstructure:"rate_limit_store_timeout"`
+}
+
+type AlertConfig struct {
+	Enabled          bool   `mapstructure:"enabled"`
+	FeishuWebhookURL string `mapstructure:"feishu_webhook_url"`
 }
 
 type LogConfig struct {
@@ -154,6 +162,11 @@ func Load(path string, environment string) (Config, error) {
 	}); err != nil {
 		return Config{}, fmt.Errorf("unmarshal config: %w", err)
 	}
+	// Viper ignores empty environment values; an explicitly empty webhook disables sending.
+	if webhook, ok := os.LookupEnv(envPrefix + "_ALERT_FEISHU_WEBHOOK_URL"); ok {
+		cfg.Alert.FeishuWebhookURL = webhook
+	}
+	cfg.Alert.FeishuWebhookURL = strings.TrimSpace(cfg.Alert.FeishuWebhookURL)
 	if err := validate(cfg); err != nil {
 		return Config{}, fmt.Errorf("validate config: %w", err)
 	}
@@ -162,6 +175,9 @@ func Load(path string, environment string) (Config, error) {
 }
 
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("alert.enabled", false)
+	v.SetDefault("alert.feishu_webhook_url", "")
+
 	v.SetDefault("statistics.ingest_token", "")
 	v.SetDefault("app.name", version.Name)
 	v.SetDefault("app.env", "dev")
@@ -221,6 +237,12 @@ func setDefaults(v *viper.Viper) {
 }
 
 func validate(cfg Config) error {
+	if cfg.Alert.Enabled && cfg.Alert.FeishuWebhookURL != "" {
+		u, err := url.ParseRequestURI(cfg.Alert.FeishuWebhookURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
+			return errors.New("alert.feishu_webhook_url must be an HTTPS URL without credentials")
+		}
+	}
 	if cfg.App.Port <= 0 || cfg.App.Port > 65535 {
 		return errors.New("app.port must be between 1 and 65535")
 	}
@@ -359,4 +381,9 @@ func stringToSliceHookFunc() mapstructure.DecodeHookFuncType {
 		}
 		return values, nil
 	}
+}
+
+// AlertRedisConfig reuses the shared Redis destination with an isolated pool.
+func (c Config) AlertRedisConfig() systemalert.RedisConfig {
+	return systemalert.RedisConfig{Mode: c.Redis.Mode, Addrs: c.Redis.Addrs, Username: c.Redis.Username, Password: c.Redis.Password, DB: c.Redis.DB, MasterName: c.Redis.MasterName, SentinelUsername: c.Redis.SentinelUsername, SentinelPassword: c.Redis.SentinelPassword, KeyPrefix: c.Redis.KeyPrefix}
 }

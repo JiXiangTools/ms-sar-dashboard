@@ -22,7 +22,9 @@ import (
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/database"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/elasticsearch"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/logx"
+	"github.com/JiXiangTools/ms-sar-dashboard/internal/platform/systemalert"
 	"github.com/JiXiangTools/ms-sar-dashboard/internal/service"
+	"github.com/redis/go-redis/v9"
 )
 
 type Options struct {
@@ -31,6 +33,9 @@ type Options struct {
 }
 
 type App struct {
+	alerts        *systemalert.Publisher
+	alertConsumer *systemalert.Consumer
+	alertRedis    redis.UniversalClient
 	cfg           config.Config
 	logger        *log.Logger
 	httpServer    *http.Server
@@ -113,7 +118,29 @@ func New(opts Options) (*App, error) {
 		IdleTimeout:       cfg.App.IdleTimeout,
 	}
 
+	var alerts *systemalert.Publisher
+	var alertConsumer *systemalert.Consumer
+	var alertRedis redis.UniversalClient
+	if cfg.Alert.Enabled && cfg.Alert.FeishuWebhookURL != "" {
+		alertClient, alertErr := systemalert.Connect(cfg.AlertRedisConfig())
+		if alertErr != nil {
+			_ = cacheClient.Close()
+			_ = databaseClient.Close()
+			return nil, alertErr
+		}
+		alerts = systemalert.NewPublisher(alertClient, cfg.Redis.KeyPrefix, "ms-sar-dashboard", cfg.App.Env)
+		logger.SetOutput(alerts.Wrap(logger.Writer(), "INFO"))
+		alertRedis, alertErr = systemalert.Connect(cfg.AlertRedisConfig())
+		if alertErr != nil {
+			_ = alerts.Close()
+			_ = cacheClient.Close()
+			_ = databaseClient.Close()
+			return nil, alertErr
+		}
+		alertConsumer = systemalert.NewConsumer(alertRedis, cfg.Redis.KeyPrefix, cfg.Alert.FeishuWebhookURL)
+	}
 	return &App{
+		alerts: alerts, alertConsumer: alertConsumer, alertRedis: alertRedis,
 		recommendation: services.Recommendation,
 		cfg:            cfg,
 		logger:         logger,
@@ -132,12 +159,16 @@ func outcome(err error) appmetrics.Outcome {
 }
 
 func (a *App) Run() error {
+	defer a.closeAlerts()
 	backgroundCtx, cancel := context.WithCancel(context.Background())
 	a.backgroundCancel = cancel
+	if a.alertConsumer != nil {
+		go a.alertConsumer.Run(backgroundCtx)
+	}
 	if a.recommendation != nil {
 		startupCtx, startupCancel := context.WithTimeout(backgroundCtx, 10*time.Second)
 		if err := a.recommendation.Reconcile(startupCtx, true); err != nil {
-			a.logger.Printf("recommendation configuration recovery pending: %v", err)
+			logx.Error(a.logger, startupCtx, time.Now(), "recommendation.projection_recovery_failed", "recommendation configuration recovery pending", logx.Err(err))
 		}
 		startupCancel()
 		go a.recommendation.Run(backgroundCtx)
@@ -177,6 +208,7 @@ func (a *App) Run() error {
 }
 
 func (a *App) Shutdown(ctx context.Context) error {
+	defer a.closeAlerts()
 	var errs []error
 
 	if a.backgroundCancel != nil {
@@ -196,4 +228,14 @@ func (a *App) Shutdown(ctx context.Context) error {
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+func (a *App) closeAlerts() {
+	if a.backgroundCancel != nil {
+		a.backgroundCancel()
+	}
+	_ = a.alerts.Close()
+	if a.alertRedis != nil {
+		_ = a.alertRedis.Close()
+	}
 }

@@ -304,3 +304,7 @@ MSSAR_DATABASE_DSN='postgres://migration-user:password@postgres:5432/ms_sar_dash
 ## 应用数据统计
 
 管理端增加「数据统计」：按 App 查看商品规模、上报趋势、普通商品 CTR、页面/详情浏览、打赏、购买及其他行为趋势。Offline 通过独立内部凭据推送按天汇总，Dashboard 持久化并提供管理员查询；部署步骤、口径、回算和数据完整性约束见 [docs/statistics.md](docs/statistics.md)。
+
+## 集中告警
+
+ERROR 及以上日志由独立后台任务异步写入共享 Redis system-alert Stream，Dashboard 每 5 秒集中发送飞书；未启用时不入队。环境变量、字段、容量保护和重试隔离规则见[集中系统告警](docs/system-alert.md)。
