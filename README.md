@@ -262,7 +262,7 @@ compose 默认暴露：
 - PostgreSQL 数据库：`ms_sar_dashboard`
 - 共享 Redis DB：`0`，地址由 `MSSAR_REDIS_ADDRS` 显式提供
 
-Compose 默认连接共享 Cluster DB 0，不再创建 Dashboard 独立 Redis。Dashboard 仍支持 `MSSAR_REDIS_MODE=standalone`（也接受 `single`）、`cluster` 和 `sentinel`。配置前缀必须与 Online、Offline 一致。应用授权投影使用跨槽 pipeline，配置发布和共享限流使用单 Key Lua；跨项目配置与真实单点/集群验证见 [Redis 模式与迁移](../alg-rec-offline/docs/redis-modes.md)。
+Compose 默认连接共享 Cluster DB 0，不再创建 Dashboard 独立 Redis。Dashboard 仍支持 `MSSAR_REDIS_MODE=standalone`（也接受 `single`）、`cluster` 和 `sentinel`。配置前缀必须与 Online、Offline 一致。应用授权投影使用跨槽 pipeline，配置发布和共享限流使用单 Key Lua；跨项目配置与真实单点/集群验证见 [Redis 模式与来源元数据](../alg-rec-offline/docs/redis-modes.md)。
 
 ## 数据库迁移
 
