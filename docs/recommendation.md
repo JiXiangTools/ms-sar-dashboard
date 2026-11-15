@@ -88,7 +88,7 @@ t_rec_publication 保存最新目标快照和 pending。发布先提交待发布
 
 本次协调变更涉及 Dashboard 定义表/API/页面/发布/统计，Online 默认配置/分桶/执行/逐项响应，Offline 配置读取/决策归档/实验统计，Receiver 归因校验，以及 Toonva 的后端契约与前端卡片埋点。Search 仅同步告警参数名，搜索索引与查询格式不变；广告发布版本和商品/Kafka 来源水位属于其他协议，继续保留。Gagpop 接入同样只使用 items/recall_id 和新 ID 规则。没有旧格式双读或数据迁移适配器。
 
-此项目尚无正式生产数据，000003 改为本次空库基线；schema.sql 的对应校验和已同步。已有测试库不能直接对旧 000003 执行新版启动，应在停写后完成以下切换。此清单尚未在测试环境执行。
+此项目尚无正式生产数据，000003 改为本次空库基线；schema.sql 的对应校验和已同步。已有测试库不能直接对旧 000003 执行新版启动，应在停写后完成以下切换。ca1 的实际执行范围和结果见下方发布记录。
 
 1. 停止目标测试环境推荐请求、Dashboard 发布重试、决策 consumer、统计及相关行为消费者；处理或清空旧格式测试消息，避免重启后回放。
 2. 在专用测试 Dashboard 库重建推荐定义表并移除旧 000003 的迁移记录，再运行新版 ms-sar-dbtool。保留 000001/000002 记录及授权、App 数据。SQL 如下：
@@ -123,4 +123,17 @@ COMMIT;
 - Offline 读取完整快照时补齐 ID、名称、产出方与读取类型、模板与周期、创建时间校验，错误类型统一按非法配置处理；非法快照在结果写入及重算清理之前失败。修改 `alg_rec_offline/service/recommendation_config.py`。
 - Offline 决策归档拒绝空值/非字符串实验 ID、无实验却使用具体策略 ID、热榜携带实验归因的记录，持久隔离后继续处理有效决策，避免污染实验统计。修改 `alg_rec_offline/service/recommendation_decisions.py`。
 
-复核验证：Dashboard/Online 全量 `go test ./...` 与 `go vet ./...` 通过，相关领域/入口/推荐包 race 检查通过；Dashboard 表单 6 项通过；Offline 全量 398 项通过、29 项按依赖条件跳过，隔离认证 Redis 单点及 Cluster 验证 108 项通过。本次未部署，也未执行上述测试环境数据清理。
+复核验证：Dashboard/Online 全量 `go test ./...` 与 `go vet ./...` 通过，相关领域/入口/推荐包 race 检查通过；Dashboard 表单 6 项通过；Offline 全量 398 项通过、29 项按依赖条件跳过，隔离认证 Redis 单点及 Cluster 验证 108 项通过。以上为工作区复核阶段结果，当时尚未部署；最终发布提交及切换验收如下。
+
+### ca1 发布记录（2026-11-15）
+
+北京时间 21:43 完成推荐不可变 ID 协调切换。固定源码、镜像及成功 CI 见 [部署记录](../../services-deploy/search-rec-ad/README.md#2026-11-15-ca1-推荐不可变-id已部署)。本批采用本任务独立提交，不包含并行开发的合集 parent_id 功能及其他 Toonva 页面修改。
+
+- 停写并排空旧行为队列后保存完整 SAR PostgreSQL 备份、配置、决策/去重 SQLite 和 App 100001 的行为文件；在隔离恢复库完成旧备份恢复及新版迁移演练后才操作实际测试库。
+- 重建空的推荐定义/发布表，重做 000003，保留 000001/000002。App 100001 清除旧实验汇总、572 条决策、630 条行为去重记录、旧行为文件及统计 manifest；清除其 appconf 与已排空的旧决策 Stream。Toonva 定向清除 2 个旧榜单缓存。商品 raw、Kafka 消费组/offset、statistics/revision.json 保留。
+- 两个 App 和管理员记录校验和前后一致；App 100002 的 8 天汇总保留。新版归档先于 Online 启动，18 个目标容器正常运行、重启 0、无 OOM，其余容器身份与启动时间未变。
+- 热门、个性化、相关各返回 5 条真实推荐，逐项 recall_id/实验字段符合新契约；Toonva 发现流与榜单转发正常，曝光/点击成功上报，决策 schema_version=3 持久归档，队列 pending/lag 为 0、quarantine 为 0。当前没有活动实验，实际流量使用 Online 本地 default。
+- Offline 单次重算成功回传 App 100001 的 14 天统计，保留统计上传 revision，商品总数 147、可用 32。HTTPS 网关的版本、发现流和前端页面通过现有证书校验；实验发布与故障链路由固定五仓提交的真实组件 CI E2E 验证，本次未向实际测试库创建验证实验。
+- 最终发布源码的 Go 全量测试/vet、Dashboard UI、Toonva 契约/游客与登录归因回归通过；Offline 378 通过、25 按依赖条件跳过，另有真实认证 Redis 单点/Cluster 及完整 Dashboard 正常/故障 E2E。前端重新导出真实新鲜 SEO 数据后全量单测与完整构建通过。此前工作区测试数量包含未发布的并行修改，不能替代该固定提交记录。
+
+受控备份与验收目录：ca1 `/home/ubuntu/services-deploy/.runtime/ca1-rec-ids-20261115/`，保留 `sar.cutover.dump`、原配置、SQLite/行为备份、镜像清单及验收日志。若回退，必须恢复同套旧程序、配置和对应数据备份；不兼容混用旧格式。
