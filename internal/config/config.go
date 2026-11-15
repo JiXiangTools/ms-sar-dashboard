@@ -209,8 +209,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.level", "info")
 
 	v.SetDefault("database.dsn", "postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard?sslmode=disable")
-	v.SetDefault("database.max_open_conns", 20)
-	v.SetDefault("database.max_idle_conns", 5)
+	v.SetDefault("database.max_open_conns", 2)
+	v.SetDefault("database.max_idle_conns", 2)
 	v.SetDefault("database.conn_max_lifetime", "30m")
 	v.SetDefault("database.health_check_timeout", "2s")
 	v.SetDefault("database.migration_timeout", "60s")

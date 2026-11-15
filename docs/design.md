@@ -212,8 +212,8 @@ sso:
 
 database:
   dsn: postgres://postgres:postgres@127.0.0.1:5432/ms_sar_dashboard?sslmode=disable
-  max_open_conns: 20
-  max_idle_conns: 5
+  max_open_conns: 2
+  max_idle_conns: 2
   conn_max_lifetime: 30m
   health_check_timeout: 2s
   migration_timeout: 60s
