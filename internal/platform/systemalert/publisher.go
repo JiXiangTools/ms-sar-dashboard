@@ -410,7 +410,7 @@ func clean(s string, limit int) string {
 
 func safeParams(fields map[string]any) map[string]any {
 	out := map[string]any{}
-	for _, key := range []string{"appid", "status", "operation", "op", "kind", "source_id", "strategy_id", "experiment_id", "experiment_version", "revision", "stream", "stream_id", "code", "count", "retry", "error", "cost_ms", "method", "route"} {
+	for _, key := range []string{"appid", "status", "operation", "op", "kind", "recall_id", "strategy_id", "experiment_id", "stream", "stream_id", "code", "count", "retry", "error", "cost_ms", "method", "route"} {
 		if v, ok := fields[key]; ok {
 			switch x := v.(type) {
 			case float64:

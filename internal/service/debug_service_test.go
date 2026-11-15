@@ -270,7 +270,7 @@ func formatRawTestJSON(t *testing.T, value any) string {
 
 func TestRecommendDebugRetainsPerItemAttribution(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"status":200,"message":"success","data":{"rec_id":"r_original","items":[{"item_id":"ad_7","from":"ad","source_id":"ad","ad":true,"experiment_id":null,"strategy_id":null},{"item_id":"A","from":"nl","source_id":"nl_feed","ad":false,"experiment_id":"exp_home","strategy_id":"a"}],"size":2}}`)
+		_, _ = io.WriteString(w, `{"status":200,"message":"success","data":{"rec_id":"r_original","items":[{"item_id":"ad_7","from":"ad","recall_id":"ad","ad":true,"experiment_id":null,"strategy_id":null},{"item_id":"A","from":"nl","recall_id":"nl_feed","ad":false,"experiment_id":"exp_home","strategy_id":"a"}],"size":2}}`)
 	}))
 	defer server.Close()
 	service := NewDebugService(config.Config{}, nil, nil, nil, log.New(io.Discard, "", 0))
@@ -278,7 +278,7 @@ func TestRecommendDebugRetainsPerItemAttribution(t *testing.T) {
 	if err != nil || got.RecID != "r_original" || got.Size != 2 || len(got.Items) != 2 {
 		t.Fatalf("debug response: %+v %v", got, err)
 	}
-	if !got.Items[0].Ad || got.Items[0].ExperimentID != nil || got.Items[1].From != "nl" || got.Items[1].SourceID != "nl_feed" || got.Items[1].StrategyID == nil || *got.Items[1].StrategyID != "a" {
+	if !got.Items[0].Ad || got.Items[0].ExperimentID != nil || got.Items[1].From != "nl" || got.Items[1].RecallID != "nl_feed" || got.Items[1].StrategyID == nil || *got.Items[1].StrategyID != "a" {
 		t.Fatalf("debug lost sources: %+v", got.Items)
 	}
 }

@@ -84,19 +84,35 @@ func (h *RecommendationHandler) SaveExperiment(c *gin.Context) {
 	}
 	response.Success(c, out)
 }
+
+type recommendationPublicationRequest struct {
+	ExperimentID *string `json:"experiment_id"`
+}
+
 func (h *RecommendationHandler) Publish(c *gin.Context) {
-	v, ok := recommendationJSON[struct {
-		ExperimentID     string `json:"experiment_id"`
-		Version          int64  `json:"experiment_version"`
-		ExpectedRevision int64  `json:"expected_revision"`
-	}](c)
+	v, ok := recommendationJSON[recommendationPublicationRequest](c)
 	if !ok {
 		return
 	}
-	out, e := h.service.Publish(c.Request.Context(), adminID(c), c.Param("appid"), v.ExperimentID, v.Version, v.ExpectedRevision)
+	if v.ExperimentID == nil {
+		response.Error(c, http.StatusBadRequest, "experiment_id must be an explicit string; use an empty string to stop", nil)
+		return
+	}
+	out, e := h.service.Publish(c.Request.Context(), adminID(c), c.Param("appid"), *v.ExperimentID)
 	if e != nil {
 		writeError(c, e)
 		return
 	}
 	response.Success(c, out)
+}
+
+func (h *RecommendationHandler) DeleteRecall(c *gin.Context)     { h.deleteDefinition(c, "recall") }
+func (h *RecommendationHandler) DeleteStrategy(c *gin.Context)   { h.deleteDefinition(c, "strategy") }
+func (h *RecommendationHandler) DeleteExperiment(c *gin.Context) { h.deleteDefinition(c, "experiment") }
+func (h *RecommendationHandler) deleteDefinition(c *gin.Context, kind string) {
+	if err := h.service.Delete(c.Request.Context(), adminID(c), kind, c.Param("appid"), c.Param("id")); err != nil {
+		writeError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
 }

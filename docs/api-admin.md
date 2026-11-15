@@ -525,7 +525,7 @@ POST /api/v1/admin/debug/rec
 
 - 实际调用的推荐接口路径。
 - 透传给推荐接口的参数。
-- 推荐接口返回的 `rec_id`、逐商品 `items` 和 `size`；items 保留 item_id/from/source_id/ad/experiment_id/strategy_id，size 包含广告。
+- 推荐接口返回的 `rec_id`、逐商品 `items` 和 `size`；items 保留 item_id/from/recall_id/ad/experiment_id/strategy_id，size 包含广告。
 - 推荐接口原始响应。
 
 限制：

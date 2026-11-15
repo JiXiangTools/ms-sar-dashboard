@@ -17,14 +17,14 @@
 - 账号密码登录，登录成功和失败都必须记录日志。
 - 可选单点登录。
 - 授权应用管理：新增、删除、修改、分页列表。
-- 推荐实验：全局召回源、应用策略、不可变实验版本、流量分桶与历史生效区间。
-- 数据统计：按实验版本和策略查看推荐请求、曝光、点击与行为次数。
+- 推荐实验：全局召回源、应用策略、不可变实验定义、流量分桶与历史生效区间。
+- 数据统计：按实验 ID 和策略 ID查看推荐请求、曝光、点击与行为次数。
 
 ## 文档导航
 
 - [docs/design.md](./docs/design.md)：总体设计、职责边界、数据模型和认证授权方案
 - [docs/api-admin.md](./docs/api-admin.md)：管理端 API 契约
-- [docs/recommendation.md](./docs/recommendation.md)：推荐实验配置、发布、版本历史与上线步骤
+- [docs/recommendation.md](./docs/recommendation.md)：推荐实验配置、发布与测试环境切换步骤
 - [docs/statistics.md](./docs/statistics.md)：业务统计与实验归因口径
 - [docs/agent.md](./docs/agent.md)：协作约束和后续实现注意事项
 
@@ -85,7 +85,7 @@
 
 - dashboard：登录成功/失败、登录日志、应用创建/列表/修改/删除、Redis 同步、审计日志脱敏。
 - data-receiver：统一 Header 授权成功，secret 错误、应用删除时失败；dashboard 授权接口不可用且无历史成功缓存时失败，有历史成功缓存时按接入服务契约短期沿用；Kafka 消息格式不变。
-- rec-online：统一 Header 授权成功，推荐 Redis key 使用 Header appid，响应增加 rec_id 和 extra，原有内容/广告字段保持兼容。
+- rec-online：统一 Header 授权成功，推荐 Redis key 使用 Header appid，响应使用 rec_id 和 items，逐项保留 recall_id 与实验/策略 ID；不兼容旧推荐格式。
 - search-online：统一 Header 授权成功，ES 索引使用 Header appid，搜索响应格式不变。
 - debug：ES Debug 和推荐 Debug 只读，操作写审计日志。
 
@@ -266,7 +266,7 @@ Compose 默认连接共享 Cluster DB 0，不再创建 Dashboard 独立 Redis。
 
 ## 数据库迁移
 
-迁移文件位于 `upgrade/sql/migrations/`，命名为六位递增版本号加名称，例如 `000001_initial.sql`。已发布的文件不可修改；任何结构变化都新增更高版本。迁移器把版本、名称、SHA-256 checksum 和执行时间写入 `schema_migrations`。
+迁移文件位于 `upgrade/sql/migrations/`，命名为六位递增版本号加名称，例如 `000001_initial.sql`。已发布的文件不可修改；任何结构变化都新增更高版本。本次上线前重设 000003 基线，已有测试库须先按 [切换步骤](docs/recommendation.md#本次修改范围与测试环境切换) 清理旧推荐定义及迁移记录。迁移器把版本、名称、SHA-256 checksum 和执行时间写入 `schema_migrations`。
 
 迁移保证：
 

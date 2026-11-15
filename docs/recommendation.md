@@ -1,110 +1,126 @@
-# 推荐策略与实验版本
+# 推荐配置与实验
 
-逐商品推荐契约见 [Offline 推荐实验](../../alg-rec-offline/docs/recommendation-experiments.md)。统一 items 替换 item_ids/ad_ids/extra；Toonva 卡片按自身 ID 保留 rec_id、from、source_id、ad、experiment_id、strategy_id，曝光/点击沿用原卡片归因。无实验字段为 null，广告不带实验分组。
+本次采用不可变定义：召回源、策略和实验只有新增、查看、删除；调整任何定义必须使用新的 ID，删除后 ID 仍不可复用。不再使用业务 version、发布 revision、controls、salt 或 bucket_algorithm。`schema_version=3` 只识别数据格式，不参与运营配置或实验分组。不兼容旧配置、旧推荐响应及旧归因决策。
 
-## 配置与发布
+## 定义与应用范围
 
-后台「推荐实验」按全局召回源、应用策略、实验版本三个层次管理。一个 App 可以保存多个策略和实验草稿，同一时刻只运行一个实验。策略可被不同实验复用。
+- 召回源是全局目录，使用 `recall_id` 标识如何读取算法结果。`kind` 必须明确为 item/user/global，`producer` 为 icf/ir/nl/hot/external；`hot_period` 仅用于 hot，确实决定榜单周期和 newest 来源。相同 Redis key 可有不同 recall_id，分别使用自己的配额与权重。
+- 策略、实验和当前发布配置按 App 隔离。策略以 `(appid,strategy_id)` 唯一，实验以 `(appid,experiment_id)` 唯一；不同 App 可有相同策略 ID。所有定义 ID 匹配 `[a-z][a-z0-9_]{0,47}`。
+- 每个 App 可保存多个策略和实验，同一时刻运行一个实验。策略可被多个实验引用；实验创建时保存完整召回与策略快照。
+- `default` 是 Online 本地默认策略的保留 ID。Dashboard 不能创建这个 ID。当前使用哪份实验可以变化，发布不做序号比较或 CAS。
 
-1. 新建全局召回源：名称、source_id、读取类型、数据产出方和 Key 模板。模板使用 `{appid}`、`{itemid}`、`{userid}`，不写 `*` 通配符。Item CF 示例 `icf_{appid}_{itemid}`；外部 User CF 示例 `ucf_{appid}_{userid}`。
-2. 新建应用策略：选择 `recommendation_type=personalized`（个性化推荐）或 `related`（相关推荐），填写中文名称、strategy_id、召回源及各自的权重和召回比例。两类策略均可把最新上架添加到 recall，参与统一过滤、去重和权重排序，不单独预留新品位置；个性化推荐另可配置全局兜底榜单，相关推荐只执行召回与排序，禁止配置 fallback，候选不足时返回实际数量。未选择并启用最新召回时，后台提示「如不添加最新的召回， 新品可能无法推荐！」。当前排序只支持 `recall_weight`。热门接口不参与策略与实验分配。
-3. 创建实验版本：选择已有策略版本、身份字段和整数流量范围，统一使用稳定哈希分桶。每个参与实验的推荐类型还必须选择一个固定版本的默认对照策略，使用与实验分组不同的策略 ID。后台复制实验保留原策略和对照版本，升级需明确选择；切换版本后按该版本的推荐类型显示流量配置。保存时冻结所有所选策略及引用的召回源版本。
-4. 发布草稿：原运行版本结束，新版本开始。编辑召回源或策略只生成新定义版本；调整运行效果必须创建并发布新的实验版本，不能原地改变旧快照。
-5. 停止实验：发布 `experiment:null`，Online 使用本地默认配置。再次使用旧方案时，也创建新实验版本；已结束版本不能重新开启。
+`kind` 控制 key 的填充方式：item 使用点击种子/当前物品，user 使用用户身份，global 只填 appid。模板支持 `{appid}`、`{itemid}`、`{userid}`；appid 必须独立为下划线分隔的一段。内置 icf/ir/nl 仅支持 item，hot 仅支持 global。hot_period 为 hour/day/week/month/quarter/all/newest，模板必须是 `hot_{appid}_{hot_period}`；external 不得占用 hot_ 命名空间。新增模板不自动实现新的算法。
 
-`experiment_id` 是稳定的实验标识，`experiment_version` 从 1 递增；配置发布序号 `revision` 按 App 递增，停止实验也占一个序号。创建草稿使用当前最新版本作为乐观锁，发布使用 `expected_revision`，过期编辑返回 409。
+## 策略与本地 default
 
-## 分桶规则
+Dashboard 与 `ms-rec-online/configs/recommand-settings.json` 使用相同的召回定义、策略结构、校验、编译和执行逻辑。Online JSON 顶层仅有 `default`，其中含 schema_version、recalls 目录和 personalized/related 各一份 strategy_id=default 的策略。没有 100001 或其他 App 的策略覆盖；每个 App 都使用这套本地默认配置。商品 ID 准入是应用属性，100001 的 positive_int64 约束独立保留在系统 YAML 的 `app.item_id_formats` 中。
 
-- strategy_id 匹配 `[a-z][a-z_]{0,9}`，`default` 为保留对照组。source_id / experiment_id 匹配 `[a-z][a-z0-9_]{0,47}`。
-- `bucket_by` 为 `user_id` 或 `anonymous_id`。Online 请求应传递所选身份，身份最长 128 字符。
-- 数字和字符串身份（例如 web_k123）统一按原字符串使用 SHA-256，桶为 0–99。每策略 1–99 个桶，例如范围 1–29 占 29%。同一实验内两类推荐共用稳定桶，按类型分别分配流量，同类型范围不能重叠，不同类型可使用相同范围。只有关联了该类型策略的接口参与实验，其剩余流量为 default；未配置类型不参与实验，返回 experiment_id/strategy_id=null。两类分组使用同一身份哈希，不能视为相互独立的随机实验。001 与 1 是不同字符串身份。
-- 输入为 `appid + NUL + experiment_id + NUL + salt + NUL + identity`，摘要前 8 字节按大端无符号整数 `% 100`。版本号不参与哈希，保持相同身份稳定；修改 salt、范围或身份字段需新实验版本。bucket_algorithm 固定 sha256，创建 API 可以省略，服务端填充。
-- 缺少所选身份的请求不进入实验，返回 experiment_id/strategy_id=null，决策原因记为 missing_bucket_identity。
+策略示例（创建 API 的 appid 取路径）：
 
-## 历史与生效区间
+```json
+{
+  "strategy_id":"home_a", "name":"首页策略", "recommendation_type":"personalized",
+  "recall":[{"recall_id":"nl_feed","weight":3,"recall_rate":1,"disabled":false},{"recall_id":"hot_newest","weight":1,"recall_rate":0.1,"disabled":false}],
+  "fallback":[{"recall_id":"hot_day","weight":2,"recall_rate":1,"disabled":false},{"recall_id":"hot_hour","weight":1,"recall_rate":0.5,"disabled":false}],
+  "rank":"recall_weight"
+}
+```
 
-PostgreSQL 的 `t_rec_source_version`、`t_rec_strategy_version` 和 `t_rec_experiment_version` 保存不可变配置历史。实验状态为 draft / running / ended，分别记录 created_at、started_at、ended_at。草稿尚未生效，后两项为空；运行中 ended_at 为空。
+recall 和 fallback 都是路由数组，元素格式相同；disabled 是布尔值。召回 1–16 路，兜底 0–16 路；weight >0 且 <=1000，recall_rate >0 且 <=1。fallback 只引用 global 来源；related 必须明确提交 `fallback:[]`，只执行召回和排序，候选不足返回实际数量。排序当前只有 recall_weight，由 Online 计算。
 
-策略定义记录创建时间。策略每次被实验版本使用都有独立的生效/结束区间，工作区的 `strategy_history` 返回该使用历史；对照策略的 `group_id=default`，页面标明默认对照。复用策略不会改写过去的结束时间。配置发布第一次成功写 Redis 的时间作为生效边界；DB 确认重试沿用同一时间。实际请求以 rec_id 决策中的版本为准，避免只按时钟边界推断分组。
+每路主召回先按 Offline 列表顺序过滤有效商品并去重，再选取至多 ceil(size × recall_rate) 个候选入池；多点击种子按最近优先顺序共享配额。入池后合并并按权重/分数排序。个性化主结果不足时，以缺口 M 为基数，从每路 fallback 选择至多 ceil(M × recall_rate) 个候选，合并排序补齐 M，不挤掉主召回结果。最新上架是普通全局召回，不再有独立 newest 阶段，也不保证最终结果占比。
 
-## 共享 Redis 与一致性
+商品顶层可选 parent_id 由生成端用于优先排列不同合集，同合集其余商品保留在后部，空值彼此独立。默认输出、实验与 default 采用相同消费规则；newest 保留原始时间候选后派生顺序，搜索按用户输入意图检索。详见 [召回列表消费顺序](../../alg-rec-offline/docs/design.md#51-召回列表的在线消费顺序) 和 [合集重排](../../alg-rec-offline/docs/design.md#52-推荐列表的合集重排)。
 
-Dashboard、Online、Offline 连接同一个 Redis，生产为 Cluster DB 0。Dashboard Compose 不再启动独立 Redis。三端的配置前缀必须一致：`MSSAR_REDIS_KEY_PREFIX`、`MSRO_REDIS_KEY_PREFIX`、`AROF_REDIS_KEY_PREFIX`，默认为空。
+## 实验与分桶
 
-每个 App 只有一个最新完整配置：`<prefix>rec:appconf:{appid}`，普通 SET，无 TTL。历史仅保存在数据库。Online 每次推荐读取此配置，Offline 每次任务读取；均不请求 Dashboard 配置接口，不获取刷新锁，也没有 10 分钟回源流程。Redis 配置、模板和决策队列的完整数据契约由 [Offline 实验文档](../../alg-rec-offline/docs/recommendation-experiments.md) 维护。
+```json
+{"experiment_id":"exp_home","name":"首页实验","bucket_by":"user_id","assignments":[{"strategy_id":"home_a","bucket_start":1,"bucket_end":29}]}
+```
 
-`t_rec_publication` 是发布 outbox：先提交待发布快照，再用单 Key Lua 按 revision 替换 Redis，最后确认数据库生命周期。同 revision 重试幂等，旧 revision 不能覆盖新配置。发布失败返回 503 并保留待发布状态，每 5 秒重试；存在待发布项时不允许用另一次发布覆盖它。Dashboard 启动时及运行中每分钟重放各 App 最新配置，修复缺失、损坏 JSON、错误 Redis 类型和同 revision 的内容漂移；首次恢复失败会继续重试完整恢复。恢复已确认配置保留原发布时间与实验生效区间。这是 Dashboard 的投影恢复，Online 不承担配置回源。
+bucket_by 只选 user_id/anonymous_id。固定计算 `uint64_be(SHA1(UTF8(identity))[:8]) % 100`，桶为 0–99；App、实验 ID 不参与哈希，没有算法或盐配置。001 与 1 是不同字符串身份。每策略范围包含 1–100 个桶，支持单条策略覆盖全部流量；同类型范围不可重叠，不同类型可使用相同范围；两类实验共享身份分桶，不能视为独立随机实验。
 
-Online 在配置不存在、无启用实验或配置不可解析时使用已有 `configs/recommand-settings.json` 默认策略；失效原因进入决策记录。新实验的 default 流量使用快照中固定的对照策略，修改本地默认配置不会改变实验基线。对照组仍标记 strategy_id=default，决策额外记录 effective_strategy_id 和 strategy_version；调整对照配置必须发布新实验版本。历史 schema_version=1 且未固定对照的实验维持旧语义。
+| 请求情况 | 执行策略 | 返回的实验/策略 ID |
+| --- | --- | --- |
+| 该类型参与实验、身份有效且命中范围 | 引用的不可变策略 | experiment_id / 实际 strategy_id |
+| 该类型参与实验、身份有效但未命中范围 | Online 当前本地 default | experiment_id / default |
+| 配置缺失、无实验、配置无效、类型未参与或缺少所选身份 | Online 当前本地 default | null / null |
+| hot 接口 | 请求选择的榜单 | null / null |
+
+本地 default 调整会立即影响该进程的默认流量；不固定额外对照定义，不生成默认内容 ID 或摘要 ID。执行 fallback 保留原分组。缺身份原因记为 missing_bucket_identity，未参与类型记为 recommendation_type_not_in_experiment。
+
+## 发布、历史和删除
+
+共享 Redis 每 App 一个完整快照 `<prefix>rec:appconf:{appid}`，普通 SET，无 TTL。Dashboard、Online、Offline 的 key prefix 必须一致；生产共用 Cluster DB 0。Online 每请求读取，Offline 每任务/派生写入读取，不通过 HTTP 回源。完整 wire 示例和决策归档见 [Offline 实验契约](../../alg-rec-offline/docs/recommendation-experiments.md)。
+
+PostgreSQL 保存 t_rec_recall、t_rec_strategy、t_rec_experiment；删除写 deleted_at 墓碑并保留主键。被未删除策略引用的召回、被未删除实验引用的策略、正在运行或仍是当前发布目标的实验不可删除。先停止实验，再按实验→策略→召回顺序解除引用；历史快照和审计不改写。
+
+实验状态 draft/running/ended，保存 created_at、started_at、ended_at。发布只接受 draft，结束后如需再次使用方案，创建新实验 ID。工作区 strategy_history 按实验保留策略使用区间。实际行为归因通过 rec_id 关联当时决策，不按时间边界猜测。
+
+t_rec_publication 保存最新目标快照和 pending。发布先提交待发布目标，再写 Redis 并确认生命周期；失败返回 503，后台每 5 秒重试。后续发布可以替换待发布目标，不比较发布序号；不处理极端情况下旧 Redis 写入晚到的排序问题。Dashboard 启动和每分钟重放最新配置，修复缺失、错误类型和内容漂移；已确认发布保留 published_at 与生效区间。发布请求必须显式提供字符串 experiment_id；缺失、null 或非字符串返回 400。停止提交 experiment_id 空字符串，下发 `experiment:null,recalls:[],strategies:[]`。
 
 ## 管理 API
 
-全部使用现有管理员 JWT、统一响应 envelope 和审计日志。
+使用现有管理员 JWT、统一响应和 RECOMMENDATION 审计。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/api/v1/admin/recommendation/sources` | 全局召回源最新定义 |
-| POST | `/api/v1/admin/recommendation/sources` | 创建召回源新版本 |
-| GET | `/api/v1/admin/recommendation/apps/:appid` | 应用策略、最近 500 个实验版本、发布状态与策略使用历史 |
-| POST | `/api/v1/admin/recommendation/apps/:appid/strategies` | 创建策略新版本 |
-| POST | `/api/v1/admin/recommendation/apps/:appid/experiments` | 创建实验草稿新版本 |
-| POST | `/api/v1/admin/recommendation/apps/:appid/publication` | 发布草稿或停止实验 |
+| GET / POST | `/api/v1/admin/recommendation/recalls` | 查看 / 新增全局召回定义 |
+| DELETE | `/api/v1/admin/recommendation/recalls/:id` | 删除未引用召回，保留 ID |
+| GET | `/api/v1/admin/recommendation/apps/:appid` | 策略、实验、快照、发布状态和使用历史 |
+| POST | `/api/v1/admin/recommendation/apps/:appid/strategies` | 新增策略 |
+| DELETE | `/api/v1/admin/recommendation/apps/:appid/strategies/:id` | 删除未引用策略 |
+| POST | `/api/v1/admin/recommendation/apps/:appid/experiments` | 新增实验草稿 |
+| DELETE | `/api/v1/admin/recommendation/apps/:appid/experiments/:id` | 删除非活动实验 |
+| POST | `/api/v1/admin/recommendation/apps/:appid/publication` | `{"experiment_id":"exp_home"}` 发布，空字符串停止 |
 
-创建召回源（首次 version=0，更新时传最新 version）：
+召回创建示例：`{"recall_id":"nl_feed","name":"Nearline","kind":"item","producer":"nl","key_template":"nl_{appid}_{itemid}","value_format":"compact_score"}`。没有编辑接口。未知字段/非法配置为 400，不存在为 404，重复 ID/引用阻止删除/非草稿发布为 409，发布待重试为 503。
 
-```json
-{"source_id":"icf","version":0,"name":"Item CF","kind":"item","producer":"icf","key_template":"icf_{appid}_{itemid}","value_format":"compact_score"}
-```
-
-读取类型为 item / user / global；产出方为 icf / ir / nl / hot / external。内置 icf/ir/nl 仅支持 item，hot 仅支持 global，并要求 `hot_period` 为 hour/day/week/month/quarter/all/newest。user 由外部服务产出。权重 >0 且 <=1000，recall_rate >0 且 <=1，每策略 1–16 个召回源。后台支持小数权重、召回比例及单独停用召回源，编辑时保留这些设置。多个来源即使读取同一 Redis key，也分别应用自身权重、配额和启用状态。fallback 必须引用 global 源。最新召回使用 kind=global、producer=hot、hot_period=newest 的来源，例如 hot_{appid}_newest；recall_rate 将该源过滤后的入池候选限制为 ceil(size × recall_rate)，不保证最终结果占比。全局模板的新增不自动新增算法实现。
-
-创建策略：
+## 推荐响应和埋点
 
 ```json
-{"strategy_id":"a","version":0,"recommendation_type":"personalized","name":"策略 A","recall":[{"source_id":"icf","weight":3,"recall_rate":1,"disabled":false},{"source_id":"newest","weight":1,"recall_rate":0.2,"disabled":false}],"fallback_source_id":"","rank":"recall_weight"}
+{"rec_id":"r_0123456789abcdef0123456789abcdef","items":[{"item_id":"C10001","from":"nl","recall_id":"nl_feed","ad":false,"experiment_id":"exp_home","strategy_id":"home_a"}],"size":1}
 ```
 
-相关推荐策略将 `recommendation_type` 设为 `related`，fallback_source_id 留空，同样可关联 newest 召回源。新策略不再接受独立 newest 配置，空值不会写入配置；历史策略和快照仍兼容读取，保持原执行语义。后台编辑旧版本时，将启用的 newest 来源并入 recall（默认权重 1，原 share_percent 转为 recall_rate），已有同名召回保留现有设置，界面明确提示核对配置和场景行为变化；保存新策略并发布新实验版本后生效。新建时缺省类型兼容为 personalized；历史快照中缺少类型也按 personalized 解释，不重写历史。类型变更创建新策略版本，并须在新实验版本中关联才能生效；分桶校验以所关联版本的类型为准。
+每项保留胜出来源；广告 from=ad、recall_id=ad，实验字段 null。客户端按卡片保存 rec_id/from/recall_id/ad 和实验字段，在平铺 properties 中回传，省略 null 实验字段。旧卡片在新实验发布后上报仍关联原决策和原 ID。决策 schema_version=3；实验统计按 experiment_id+strategy_id+recommendation_type 分组，见 [statistics.md](statistics.md)。
 
-创建实验（首次 experiment_version=0，strategy_version=0 表示保存时选最新策略版本，也可以固定指定版本）：
+## 本次修改范围与测试环境切换
 
-```json
-{"experiment_id":"exp_home","experiment_version":0,"name":"首页实验","bucket_by":"user_id","bucket_algorithm":"sha256","salt":"","assignments":[{"strategy_id":"a","strategy_version":0,"bucket_start":1,"bucket_end":29}],"controls":[{"strategy_id":"base","strategy_version":1}]}
+本次协调变更涉及 Dashboard 定义表/API/页面/发布/统计，Online 默认配置/分桶/执行/逐项响应，Offline 配置读取/决策归档/实验统计，Receiver 归因校验，以及 Toonva 的后端契约与前端卡片埋点。Search 仅同步告警参数名，搜索索引与查询格式不变；广告发布版本和商品/Kafka 来源水位属于其他协议，继续保留。Gagpop 接入同样只使用 items/recall_id 和新 ID 规则。没有旧格式双读或数据迁移适配器。
+
+此项目尚无正式生产数据，000003 改为本次空库基线；schema.sql 的对应校验和已同步。已有测试库不能直接对旧 000003 执行新版启动，应在停写后完成以下切换。此清单尚未在测试环境执行。
+
+1. 停止目标测试环境推荐请求、Dashboard 发布重试、决策 consumer、统计及相关行为消费者；处理或清空旧格式测试消息，避免重启后回放。
+2. 在专用测试 Dashboard 库重建推荐定义表并移除旧 000003 的迁移记录，再运行新版 ms-sar-dbtool。保留 000001/000002 记录及授权、App 数据。SQL 如下：
+
+```sql
+BEGIN;
+DROP TABLE IF EXISTS t_rec_publication;
+DROP TABLE IF EXISTS t_rec_experiment_version, t_rec_strategy_version, t_rec_source_version;
+DROP TABLE IF EXISTS t_rec_experiment, t_rec_strategy, t_rec_recall;
+DELETE FROM schema_migrations WHERE version = 3;
+COMMIT;
 ```
 
-发布：
+3. 清除目标测试 App 在 t_app_statistics_day、t_app_statistics_snapshot 的旧实验聚合；保留其他 App 的记录。统计 revision 仍是聚合上传幂等序号，与已移除的配置 revision 无关。
+4. 删除目标前缀的 `rec:appconf:{appid}`；协调该前缀全部 App 切换后删除旧 `rec:decisions` Stream（含旧 consumer group）。按实际模板清除已废弃召回别名；默认算法结果可由新版任务重算。Cluster 查找键时遍历全部主节点。
+5. 停止归档后清理测试 data/recommendation-decisions/decisions.sqlite3 及其 -wal/-shm；如卷共用多个 App，按 appid 删除目标测试决策及相关 quarantine，保留其他 App。移除目标 App 的旧归因行为 raw `data/behavior/<appid>/`，同步清理对应行为去重索引/旧 Kafka 消息或使用新的测试事件 ID；保留商品 raw。移除该 App 的 `state/statistics/<appid>-manifest.json` 后重算，保留 statistics/revision.json。
+6. 清理业务端旧归因缓存：Toonva Redis `read:rank:*` 榜单缓存、浏览器已有推荐卡片/未发送埋点；重新拉取卡片。按缓存实际共享范围定向清理。
+7. 同批部署读取端和生产者，先启动新版归档，再开放 Online 和行为上报。重新创建召回/策略/实验，发布后检查 schema_version=3、无业务版本字段、分桶及 default、fallback 多路归因；运行 Offline 重算并检查实验聚合。
 
-```json
-{"experiment_id":"exp_home","experiment_version":1,"expected_revision":0}
-```
+切换记录须保存目标环境、App/前缀、清理范围、执行人和时间；若回退，恢复整套旧程序及对应测试备份，避免混用格式。
 
-停止：
+验证：`go test ./...`、`node --test test/recommendation_ui_test.mjs`；独立 PostgreSQL + Redis Cluster 使用 `MSSAR_RECOMMENDATION_TEST_DSN`、`MSSAR_RECOMMENDATION_TEST_REDIS` 运行 `go test -tags integration -race ./internal/service`。
 
-```json
-{"experiment_id":"","experiment_version":0,"expected_revision":1}
-```
+2026-11-15 验证记录：Dashboard、Online、Receiver、Search 的全量 Go 测试及 vet 通过；Dashboard 独立 PostgreSQL + Redis Cluster 集成通过；Offline 全量 360 项通过、29 项按依赖条件跳过，临时 Redis 单点/Cluster 验证 48 项通过。Dashboard 表单单测及浏览器多路兜底/相关推荐空兜底提交通过，Toonva API 契约和游客/登录用户归因浏览器测试通过。Toonva 前端全量单测在既有 `build/seo-collection.json` 的 2026-11-12 快照过期处失败，未修改该独立 SEO 数据。
 
-未知字段或非法配置返回 400；不存在的 App/草稿返回 404；版本冲突返回 409；待重试的发布返回 503。所有变更写入 `cate=RECOMMENDATION` 的审计记录。
+### 实现复核（2026-11-15）
 
-## 推荐响应与埋点
+保留不可变定义 ID、按 App 发布、本地统一 default、多路 fallback、身份固定分桶的方案。本次整改范围为 Dashboard、Online、Offline，不增加业务版本、发布序号或旧格式兼容。
 
-Online 返回 rec_id 与统一的逐商品 items：
+- Dashboard 发布入口区分漏传/null 与显式空字符串：前者返回 400，后者才停止实验，避免不完整请求意外停用当前实验。修改 `internal/http/handler/recommendation.go`。
+- 取消单条策略最多 99 个桶的限制；单条策略可以覆盖全部 0–99 桶，未分配流量继续执行 default。同步 Dashboard/Online 的领域校验、Dashboard 表单与 Offline 读取校验；Online 回归覆盖全部 100 个桶。
+- Offline 读取完整快照时补齐 ID、名称、产出方与读取类型、模板与周期、创建时间校验，错误类型统一按非法配置处理；非法快照在结果写入及重算清理之前失败。修改 `alg_rec_offline/service/recommendation_config.py`。
+- Offline 决策归档拒绝空值/非字符串实验 ID、无实验却使用具体策略 ID、热榜携带实验归因的记录，持久隔离后继续处理有效决策，避免污染实验统计。修改 `alg_rec_offline/service/recommendation_decisions.py`。
 
-```json
-{"rec_id":"r_0123456789abcdef0123456789abcdef","items":[{"item_id":"C10001","from":"nl","source_id":"nl_feed","ad":false,"experiment_id":"exp_home","strategy_id":"a"}],"size":1}
-```
-
-个性化和相关推荐接口只执行各自类型的策略。无实验或实验未关联该类型策略时 experiment_id/strategy_id=null，后者决策原因为 recommendation_type_not_in_experiment；参与实验的类型内剩余流量返回相同 experiment_id 和 strategy_id=default。个性化推荐召回不足而执行 fallback 时，仍保留原分组。相关推荐默认配置同样只执行召回与排序，可使用最新召回，不使用兜底或独立上新流程。热门接口不读取实验配置，始终 experiment_id/strategy_id=null，保留 rec_id。实际策略、配置序号、实验/策略版本、推荐类型、兜底/上新数量及返回物品写入 rec_id 对应的决策。newest_count 仅计入最终返回且去重后来源胜出的是最新召回的物品；新品候选因低权重未返回时不计数。
-
-曝光、点击等物品行为在现有平铺 properties 中携带原项的 rec_id、from、source_id、ad，并在实验字段非 null 时携带 experiment_id、strategy_id。客户端不需要传 experiment_version；统计通过决策取原版本，因此版本切换后上报的旧曝光/点击仍归入旧版本。完整示例见 [Receiver API](../../ms-data-receiver/docs/api.md)，统计口径见 [statistics.md](statistics.md)。
-
-## 上线与验证
-
-先运行 `ms-sar-dbtool` 应用迁移 000003，再部署 Dashboard、Offline 的配置读取与 `rec-decision-consumer`、Online 和 Receiver。所有服务使用共享 Cluster DB 0 和相同配置前缀。决策 consumer 与 rec-statistics 共享持久 data 卷；先启动归档，再开放新 Online 流量。接入端把响应元数据随对应物品埋点回传后，实验事件统计才完整。
-
-本次固定对照扩展使用配置 schema_version=2，无新增数据库迁移。先升级支持配置版本 1/2 的 Online 与 Offline，再部署 Dashboard 并发布新实验；旧 Online 使用严格配置解析，不能读取 controls。旧实验不会自动补对照，编辑时需选择并保存新实验版本。已有自定义热门 key 或 appid 拼接未分段的模板应先在旧服务上改为规范模板并发布新实验版本，再升级读取方；历史数据库快照保留不变，非法活动配置会被拒绝，Online 退回本地默认。
-
-模板中的 appid 必须独立为下划线分隔的一段。热门源只接受 hot_{appid}_{hot_period}，不支持自定义热门别名：日榜只能指向 hot_{appid}_day，上新源只能指向 hot_{appid}_newest，由 nearline 维护；external 不得占用 hot_ 命名空间。日榜不处理 newest 的配置，日榜重算和清理保留上新榜的内容及 TTL。原有分类榜沿用独立的分类命名规则。
-
-`go test ./...` 覆盖配置校验、统计合并和原有 API；`node --test test/recommendation_ui_test.mjs` 验证后台版本选择及策略编辑，均纳入 CI。设置独立 `MSSAR_RECOMMENDATION_TEST_DSN` 与 `MSSAR_RECOMMENDATION_TEST_REDIS=host1:port,host2:port,host3:port` 后运行 `go test -tags integration -race ./internal/service`，验证快照、无 TTL 发布、历史区间、并发编辑与失败重试。
+复核验证：Dashboard/Online 全量 `go test ./...` 与 `go vet ./...` 通过，相关领域/入口/推荐包 race 检查通过；Dashboard 表单 6 项通过；Offline 全量 398 项通过、29 项按依赖条件跳过，隔离认证 Redis 单点及 Cluster 验证 108 项通过。本次未部署，也未执行上述测试环境数据清理。

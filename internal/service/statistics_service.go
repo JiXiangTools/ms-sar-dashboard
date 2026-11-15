@@ -78,7 +78,7 @@ func validateStatistics(v domain.StatisticsDay, now time.Time) error {
 		return invalid
 	}
 	day, err := time.ParseInLocation(time.DateOnly, v.Date, statisticsLocation)
-	if err != nil || (v.SchemaVersion != 1 && v.SchemaVersion != 2) || v.Timezone != StatisticsTimezone || v.Revision <= 0 || v.Revision > 9007199254740991 {
+	if err != nil || v.SchemaVersion != 2 || v.Timezone != StatisticsTimezone || v.Revision <= 0 || v.Revision > 9007199254740991 {
 		return invalid
 	}
 	if v.GeneratedAt < day.Unix() || v.GeneratedAt > now.Unix()+300 || len(v.Hours) != 24 {
@@ -120,11 +120,11 @@ func validateStatistics(v domain.StatisticsDay, now time.Time) error {
 	}
 	seen := map[string]bool{}
 	for _, g := range v.Experiments {
-		key := g.ExperimentID + ":" + strconv.FormatInt(g.ExperimentVersion, 10) + ":" + g.StrategyID + ":" + g.RecommendationType
-		if g.RecommendationType != "" && g.RecommendationType != domain.RecommendationPersonalized && g.RecommendationType != domain.RecommendationRelated && g.RecommendationType != "hot" {
+		key := g.ExperimentID + ":" + g.StrategyID + ":" + g.RecommendationType
+		if g.RecommendationType != domain.RecommendationPersonalized && g.RecommendationType != domain.RecommendationRelated {
 			return invalid
 		}
-		if !domain.RecommendationIDPattern.MatchString(g.ExperimentID) || !domain.StrategyIDPattern.MatchString(g.StrategyID) || g.ExperimentVersion < 1 || seen[key] || g.Events == nil || len(g.Events) > 64 || g.Exposures > g.Events["show"] || g.Clicks > g.Events["click"] {
+		if !domain.RecommendationIDPattern.MatchString(g.ExperimentID) || !domain.StrategyIDPattern.MatchString(g.StrategyID) || seen[key] || g.Events == nil || len(g.Events) > 64 || g.Exposures > g.Events["show"] || g.Clicks > g.Events["click"] {
 			return invalid
 		}
 		seen[key] = true
@@ -232,9 +232,9 @@ func (s *StatisticsService) Query(ctx context.Context, appID, from, to, granular
 			result.AttributionQuality[kind] += n
 		}
 		for _, g := range d.Experiments {
-			key := g.ExperimentID + ":" + strconv.FormatInt(g.ExperimentVersion, 10) + ":" + g.StrategyID + ":" + g.RecommendationType
+			key := g.ExperimentID + ":" + g.StrategyID + ":" + g.RecommendationType
 			if groups[key] == nil {
-				groups[key] = &domain.ExperimentStatistics{RecommendationType: g.RecommendationType, ExperimentID: g.ExperimentID, ExperimentVersion: g.ExperimentVersion, StrategyID: g.StrategyID, Events: map[string]int64{}}
+				groups[key] = &domain.ExperimentStatistics{RecommendationType: g.RecommendationType, ExperimentID: g.ExperimentID, StrategyID: g.StrategyID, Events: map[string]int64{}}
 			}
 			v := groups[key]
 			v.Recommendations += g.Recommendations

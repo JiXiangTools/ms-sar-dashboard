@@ -55,13 +55,13 @@ COMMIT;
 BEGIN;
 SELECT pg_advisory_xact_lock(21765190250021954);
 DO $$ BEGIN
-IF EXISTS (SELECT 1 FROM schema_migrations WHERE version=3 AND (name<>'recommendation_experiments' OR checksum<>'3d0867786a9f88f95c717860a2edfc2cac4e4437a42ce552eef3e1ad3ccd948a')) THEN
+IF EXISTS (SELECT 1 FROM schema_migrations WHERE version=3 AND (name<>'recommendation_experiments' OR checksum<>'7c84edaec43a88e71e4c9f3a36ac85adf08a1c9b1392dd1bc59288763b7980ce')) THEN
 RAISE EXCEPTION 'migration 000003 metadata does not match this build';
 END IF;
 END $$;
 SELECT NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version=3) AS migration_000003_pending \gset
 \if :migration_000003_pending
 \ir migrations/000003_recommendation_experiments.sql
-INSERT INTO schema_migrations(version,name,checksum) VALUES (3,'recommendation_experiments','3d0867786a9f88f95c717860a2edfc2cac4e4437a42ce552eef3e1ad3ccd948a');
+INSERT INTO schema_migrations(version,name,checksum) VALUES (3,'recommendation_experiments','7c84edaec43a88e71e4c9f3a36ac85adf08a1c9b1392dd1bc59288763b7980ce');
 \endif
 COMMIT;

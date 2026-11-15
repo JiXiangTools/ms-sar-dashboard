@@ -82,7 +82,7 @@ type RecDebugRequest struct {
 type RecDebugItem struct {
 	ItemID       string  `json:"item_id"`
 	From         string  `json:"from"`
-	SourceID     string  `json:"source_id"`
+	RecallID     string  `json:"recall_id"`
 	Ad           bool    `json:"ad"`
 	ExperimentID *string `json:"experiment_id"`
 	StrategyID   *string `json:"strategy_id"`

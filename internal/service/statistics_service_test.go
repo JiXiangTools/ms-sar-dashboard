@@ -21,7 +21,7 @@ func (f *fakeStatisticsRepository) Statistics(context.Context, int64, string, st
 }
 func testStatisticsDay(date string, exposures, clicks int64) domain.StatisticsDay {
 	dateTime, _ := time.ParseInLocation(time.DateOnly, date, statisticsLocation)
-	d := domain.StatisticsDay{SchemaVersion: 1, AppID: "100001", Date: date, Timezone: StatisticsTimezone, Revision: 1, GeneratedAt: dateTime.Add(24 * time.Hour).Unix(), Counts: emptyStatisticsCounts(), Snapshot: domain.StatisticsSnapshot{GeneratedAt: dateTime.Add(24 * time.Hour).Unix(), HistorySince: date}}
+	d := domain.StatisticsDay{SchemaVersion: 2, AppID: "100001", Date: date, Timezone: StatisticsTimezone, Revision: 1, GeneratedAt: dateTime.Add(24 * time.Hour).Unix(), Counts: emptyStatisticsCounts(), Snapshot: domain.StatisticsSnapshot{GeneratedAt: dateTime.Add(24 * time.Hour).Unix(), HistorySince: date}}
 	for h := 0; h < 24; h++ {
 		d.Hours = append(d.Hours, domain.StatisticsHour{Hour: h, Counts: emptyStatisticsCounts()})
 	}
@@ -38,6 +38,7 @@ func TestValidateStatistics(t *testing.T) {
 		valid  bool
 	}{
 		{"valid", func(d *domain.StatisticsDay) {}, true},
+		{"old schema", func(d *domain.StatisticsDay) { d.SchemaVersion = 1 }, false},
 		{"noncanonical app", func(d *domain.StatisticsDay) { d.AppID = "0100001" }, false},
 		{"negative event", func(d *domain.StatisticsDay) { d.Counts.Events["tip"] = -1 }, false},
 		{"incorrect total", func(d *domain.StatisticsDay) { d.Counts.Clicks++ }, false},
@@ -102,17 +103,17 @@ func TestStatisticsQueryFlagsUnfinishedHistoricalDay(t *testing.T) {
 	}
 }
 
-func TestStatisticsExperimentVersionsRemainSeparate(t *testing.T) {
+func TestStatisticsExperimentIDsRemainSeparate(t *testing.T) {
 	day := testStatisticsDay("2026-01-01", 10, 2)
 	day.SchemaVersion = 2
-	day.Experiments = []domain.ExperimentStatistics{{ExperimentID: "exp_one", ExperimentVersion: 1, StrategyID: "a", Recommendations: 3, Exposures: 4, Clicks: 1, Events: map[string]int64{"show": 4, "click": 1}}, {ExperimentID: "exp_one", ExperimentVersion: 2, StrategyID: "a", Recommendations: 5, Exposures: 6, Clicks: 1, Events: map[string]int64{"show": 6, "click": 1}}}
+	day.Experiments = []domain.ExperimentStatistics{{ExperimentID: "exp_one", RecommendationType: "personalized", StrategyID: "a", Recommendations: 3, Exposures: 4, Clicks: 1, Events: map[string]int64{"show": 4, "click": 1}}, {ExperimentID: "exp_two", RecommendationType: "personalized", StrategyID: "a", Recommendations: 5, Exposures: 6, Clicks: 1, Events: map[string]int64{"show": 6, "click": 1}}}
 	day.AttributionQuality = map[string]int64{"missing_decision": 2}
 	if err := validateStatistics(day, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	result, err := NewStatisticsService(&fakeStatisticsRepository{days: []domain.StatisticsDay{day}}).Query(context.Background(), "100001", day.Date, day.Date, "hour")
-	if err != nil || len(result.Experiments) != 2 || result.Experiments[0].ExperimentVersion != 1 || result.Experiments[1].Recommendations != 5 || result.AttributionQuality["missing_decision"] != 2 {
-		t.Fatalf("version attribution lost: %+v %v", result, err)
+	if err != nil || len(result.Experiments) != 2 || result.Experiments[0].ExperimentID != "exp_one" || result.Experiments[1].Recommendations != 5 || result.AttributionQuality["missing_decision"] != 2 {
+		t.Fatalf("experiment attribution lost: %+v %v", result, err)
 	}
 	day.Experiments = append(day.Experiments, day.Experiments[0])
 	if err := validateStatistics(day, time.Now()); err == nil {
@@ -128,14 +129,14 @@ func TestStatisticsExperimentVersionsRemainSeparate(t *testing.T) {
 func TestStatisticsRecommendationTypesRemainSeparate(t *testing.T) {
 	day := testStatisticsDay("2026-01-01", 10, 2)
 	day.SchemaVersion = 2
-	for _, recommendationType := range []string{"", domain.RecommendationPersonalized, domain.RecommendationRelated} {
-		day.Experiments = append(day.Experiments, domain.ExperimentStatistics{RecommendationType: recommendationType, ExperimentID: "exp_one", ExperimentVersion: 1, StrategyID: "default", Recommendations: 3, Exposures: 4, Clicks: 1, Events: map[string]int64{"show": 4, "click": 1}})
+	for _, recommendationType := range []string{domain.RecommendationPersonalized, domain.RecommendationRelated} {
+		day.Experiments = append(day.Experiments, domain.ExperimentStatistics{RecommendationType: recommendationType, ExperimentID: "exp_one", StrategyID: "default", Recommendations: 3, Exposures: 4, Clicks: 1, Events: map[string]int64{"show": 4, "click": 1}})
 	}
 	if err := validateStatistics(day, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	result, err := NewStatisticsService(&fakeStatisticsRepository{days: []domain.StatisticsDay{day, day}}).Query(context.Background(), "100001", day.Date, day.Date, "day")
-	if err != nil || len(result.Experiments) != 3 {
+	if err != nil || len(result.Experiments) != 2 {
 		t.Fatalf("recommendation types were merged: %+v %v", result.Experiments, err)
 	}
 	seen := map[string]bool{}
@@ -145,8 +146,8 @@ func TestStatisticsRecommendationTypesRemainSeparate(t *testing.T) {
 			t.Fatalf("incorrect type aggregation: %+v", group)
 		}
 	}
-	if !seen[""] || !seen[domain.RecommendationPersonalized] || !seen[domain.RecommendationRelated] {
-		t.Fatalf("lost historical or typed groups: %+v", seen)
+	if !seen[domain.RecommendationPersonalized] || !seen[domain.RecommendationRelated] {
+		t.Fatalf("lost recommendation types: %+v", seen)
 	}
 	day.Experiments[0].RecommendationType = "unknown"
 	if err := validateStatistics(day, time.Now()); err == nil {

@@ -43,7 +43,6 @@ type StatisticsDay struct {
 type ExperimentStatistics struct {
 	RecommendationType string           `json:"recommendation_type,omitempty"`
 	ExperimentID       string           `json:"experiment_id"`
-	ExperimentVersion  int64            `json:"experiment_version"`
 	StrategyID         string           `json:"strategy_id"`
 	Recommendations    int64            `json:"recommendations"`
 	Exposures          int64            `json:"exposures"`

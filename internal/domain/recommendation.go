@@ -9,92 +9,59 @@ import (
 	"time"
 )
 
-const RecommendationSchemaVersion = 2
-
+// This is the wire format discriminator, not a business definition version.
+const RecommendationSchemaVersion = 3
 const (
 	RecommendationPersonalized = "personalized"
 	RecommendationRelated      = "related"
 )
 
-var StrategyIDPattern = regexp.MustCompile(`^[a-z][a-z_]{0,9}$`)
 var RecommendationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
+var StrategyIDPattern = RecommendationIDPattern
 var keyPlaceholderPattern = regexp.MustCompile(`\{[^{}]*\}`)
 
 type RecallSource struct {
-	SourceID    string    `json:"source_id"`
-	Version     int64     `json:"version"`
+	RecallID    string    `json:"recall_id"`
 	Name        string    `json:"name"`
 	Kind        string    `json:"kind"`
 	Producer    string    `json:"producer"`
 	HotPeriod   string    `json:"hot_period,omitempty"`
 	KeyTemplate string    `json:"key_template"`
 	ValueFormat string    `json:"value_format"`
-	CreatedAt   time.Time `json:"created_at"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
 }
-
 type StrategyRecall struct {
-	SourceID   string  `json:"source_id"`
+	RecallID   string  `json:"recall_id"`
 	Weight     float64 `json:"weight"`
 	RecallRate float64 `json:"recall_rate"`
 	Disabled   bool    `json:"disabled"`
 }
-
-type StrategyNewest struct {
-	SourceID     string   `json:"source_id"`
-	SharePercent int      `json:"share_percent"`
-	Scenes       []string `json:"scenes"`
-}
-
-func (n StrategyNewest) IsZero() bool {
-	return n.SourceID == "" && n.SharePercent == 0 && len(n.Scenes) == 0
-}
-
 type RecommendationStrategy struct {
-	RecommendationType string           `json:"recommendation_type,omitempty"`
-	AppID              string           `json:"appid"`
+	RecommendationType string           `json:"recommendation_type"`
+	AppID              string           `json:"appid,omitempty"`
 	StrategyID         string           `json:"strategy_id"`
-	Version            int64            `json:"version"`
 	Name               string           `json:"name"`
 	Recall             []StrategyRecall `json:"recall"`
-	FallbackSourceID   string           `json:"fallback_source_id"`
-	Newest             StrategyNewest   `json:"newest,omitzero"` // Read-only compatibility for historical versions.
+	Fallback           []StrategyRecall `json:"fallback"`
 	Rank               string           `json:"rank"`
-	CreatedAt          time.Time        `json:"created_at"`
+	CreatedAt          time.Time        `json:"created_at,omitempty"`
 }
 
-// Old immutable snapshots predate strategy types and remain personalized.
-func (s RecommendationStrategy) EffectiveType() string {
-	if s.RecommendationType == "" {
-		return RecommendationPersonalized
-	}
-	return s.RecommendationType
-}
+func (s RecommendationStrategy) EffectiveType() string { return s.RecommendationType }
 
 type ExperimentAssignment struct {
-	StrategyID      string `json:"strategy_id"`
-	StrategyVersion int64  `json:"strategy_version"`
-	BucketStart     int    `json:"bucket_start"`
-	BucketEnd       int    `json:"bucket_end"`
+	StrategyID  string `json:"strategy_id"`
+	BucketStart int    `json:"bucket_start"`
+	BucketEnd   int    `json:"bucket_end"`
 }
-
-type ExperimentControl struct {
-	StrategyID      string `json:"strategy_id"`
-	StrategyVersion int64  `json:"strategy_version"`
-}
-
 type RecommendationExperiment struct {
-	AppID           string                 `json:"appid"`
-	ExperimentID    string                 `json:"experiment_id"`
-	Version         int64                  `json:"experiment_version"`
-	Name            string                 `json:"name"`
-	BucketBy        string                 `json:"bucket_by"`
-	BucketAlgorithm string                 `json:"bucket_algorithm"`
-	Salt            string                 `json:"salt"`
-	Assignments     []ExperimentAssignment `json:"assignments"`
-	Controls        []ExperimentControl    `json:"controls,omitempty"`
+	AppID        string                 `json:"appid"`
+	ExperimentID string                 `json:"experiment_id"`
+	Name         string                 `json:"name"`
+	BucketBy     string                 `json:"bucket_by"`
+	Assignments  []ExperimentAssignment `json:"assignments"`
 }
-
-type ExperimentVersion struct {
+type ExperimentDefinition struct {
 	RecommendationExperiment
 	Status    string               `json:"status"`
 	CreatedAt time.Time            `json:"created_at"`
@@ -102,29 +69,23 @@ type ExperimentVersion struct {
 	EndedAt   *time.Time           `json:"ended_at"`
 	Snapshot  RecommendationConfig `json:"snapshot"`
 }
-
-// Each publication is a complete, immutable snapshot. Redis contains only the
-// most recently published snapshot; historical snapshots remain in PostgreSQL.
 type RecommendationConfig struct {
 	SchemaVersion int                       `json:"schema_version"`
-	AppID         string                    `json:"appid"`
-	Revision      int64                     `json:"revision"`
-	PublishedAt   int64                     `json:"published_at"`
+	AppID         string                    `json:"appid,omitempty"`
+	PublishedAt   int64                     `json:"published_at,omitempty"`
 	Experiment    *RecommendationExperiment `json:"experiment"`
-	Sources       []RecallSource            `json:"sources"`
+	Recalls       []RecallSource            `json:"recalls"`
 	Strategies    []RecommendationStrategy  `json:"strategies"`
 }
-
 type RecommendationPublication struct {
-	AppID             string               `json:"appid"`
-	Revision          int64                `json:"revision"`
-	PublishedRevision int64                `json:"published_revision"`
-	Config            RecommendationConfig `json:"config"`
+	AppID   string               `json:"appid"`
+	Pending bool                 `json:"pending"`
+	Config  RecommendationConfig `json:"config"`
 }
 
 func ValidateRecallSource(s RecallSource) error {
-	if !RecommendationIDPattern.MatchString(s.SourceID) || strings.TrimSpace(s.Name) == "" || len([]rune(s.Name)) > 64 {
-		return errors.New("invalid source id or name")
+	if !RecommendationIDPattern.MatchString(s.RecallID) || strings.TrimSpace(s.Name) == "" || len([]rune(s.Name)) > 64 {
+		return errors.New("invalid recall id or name")
 	}
 	if s.Kind != "item" && s.Kind != "user" && s.Kind != "global" {
 		return errors.New("source kind must be item, user or global")
@@ -190,56 +151,43 @@ func ValidateRecallSource(s RecallSource) error {
 	return nil
 }
 
-func ValidateRecommendationStrategy(s RecommendationStrategy, sources map[string]RecallSource) error {
-	if !s.Newest.IsZero() {
-		return errors.New("configure newest as a recall source with weight and recall_rate, not a separate newest stage")
-	}
-	return ValidatePublishedRecommendationStrategy(s, sources)
+func ValidateRecommendationStrategy(s RecommendationStrategy, recalls map[string]RecallSource) error {
+	return validateStrategy(s, recalls, false)
 }
-
-// Historical snapshots retain their original behavior; new definitions use recall.
-func ValidatePublishedRecommendationStrategy(s RecommendationStrategy, sources map[string]RecallSource) error {
-	if s.EffectiveType() != RecommendationPersonalized && s.EffectiveType() != RecommendationRelated {
+func ValidateDefaultStrategy(s RecommendationStrategy, recalls map[string]RecallSource) error {
+	return validateStrategy(s, recalls, true)
+}
+func validateStrategy(s RecommendationStrategy, recalls map[string]RecallSource, local bool) error {
+	if s.RecommendationType != RecommendationPersonalized && s.RecommendationType != RecommendationRelated {
 		return errors.New("recommendation_type must be personalized or related")
 	}
-	if s.EffectiveType() == RecommendationRelated && (s.FallbackSourceID != "" || s.Newest.SourceID != "" || s.Newest.SharePercent != 0 || len(s.Newest.Scenes) != 0) {
-		return errors.New("related strategies support recall and rank only; fallback and a separate newest stage are not allowed")
+	if !StrategyIDPattern.MatchString(s.StrategyID) || (s.StrategyID == "default") != local || strings.TrimSpace(s.Name) == "" || len([]rune(s.Name)) > 64 {
+		return errors.New("invalid strategy id or name; default is reserved for Online defaults")
 	}
-	if !StrategyIDPattern.MatchString(s.StrategyID) || s.StrategyID == "default" || strings.TrimSpace(s.Name) == "" || len([]rune(s.Name)) > 64 {
-		return errors.New("strategy id must be 1–10 lowercase letters/underscores, start with a letter, and not be default")
+	if s.Fallback == nil || len(s.Recall) == 0 || len(s.Recall) > 16 || len(s.Fallback) > 16 || s.Rank != "recall_weight" {
+		return errors.New("select 1–16 recalls, at most 16 fallbacks and recall_weight ranking")
 	}
-	if len(s.Recall) == 0 || len(s.Recall) > 16 || s.Rank != "recall_weight" {
-		return errors.New("select 1–16 recall sources and recall_weight ranking")
+	if s.RecommendationType == RecommendationRelated && len(s.Fallback) != 0 {
+		return errors.New("related strategies support recall and rank only")
 	}
-	seen := map[string]bool{}
-	for _, r := range s.Recall {
-		if _, ok := sources[r.SourceID]; !ok || seen[r.SourceID] {
-			return errors.New("unknown or duplicate recall source")
-		}
-		seen[r.SourceID] = true
-		if math.IsNaN(r.Weight) || math.IsInf(r.Weight, 0) || r.Weight <= 0 || r.Weight > 1000 || math.IsNaN(r.RecallRate) || math.IsInf(r.RecallRate, 0) || r.RecallRate <= 0 || r.RecallRate > 1 {
-			return errors.New("weight must be >0 and <=1000; recall_rate must be >0 and <=1")
-		}
-	}
-	for _, id := range []string{s.FallbackSourceID, s.Newest.SourceID} {
-		if id != "" {
-			source, ok := sources[id]
-			if !ok || source.Kind != "global" {
-				return errors.New("fallback/newest require a global source")
+	for stage, routes := range [][]StrategyRecall{s.Recall, s.Fallback} {
+		seen := map[string]bool{}
+		for _, route := range routes {
+			recall, ok := recalls[route.RecallID]
+			if !ok || seen[route.RecallID] {
+				return errors.New("unknown or duplicate recall id within a stage")
 			}
-		}
-	}
-	if s.Newest.SharePercent < 0 || s.Newest.SharePercent > 100 || len(s.Newest.Scenes) > 32 || (s.Newest.SharePercent > 0 && (s.Newest.SourceID == "" || len(s.Newest.Scenes) == 0)) {
-		return errors.New("invalid newest percentage or scenes")
-	}
-	for _, scene := range s.Newest.Scenes {
-		if len(scene) == 0 || len(scene) > 32 {
-			return errors.New("invalid newest scene")
+			seen[route.RecallID] = true
+			if stage == 1 && recall.Kind != "global" {
+				return errors.New("fallback requires global recalls")
+			}
+			if math.IsNaN(route.Weight) || math.IsInf(route.Weight, 0) || route.Weight <= 0 || route.Weight > 1000 || math.IsNaN(route.RecallRate) || math.IsInf(route.RecallRate, 0) || route.RecallRate <= 0 || route.RecallRate > 1 {
+				return errors.New("weight must be >0 and <=1000; recall_rate must be >0 and <=1")
+			}
 		}
 	}
 	return nil
 }
-
 func ValidateRecommendationExperiment(e RecommendationExperiment) error {
 	if !RecommendationIDPattern.MatchString(e.ExperimentID) || strings.TrimSpace(e.Name) == "" || len([]rune(e.Name)) > 64 {
 		return errors.New("invalid experiment id or name")
@@ -247,81 +195,38 @@ func ValidateRecommendationExperiment(e RecommendationExperiment) error {
 	if e.BucketBy != "user_id" && e.BucketBy != "anonymous_id" {
 		return errors.New("bucket_by must be user_id or anonymous_id")
 	}
-	if e.BucketAlgorithm != "sha256" {
-		return errors.New("bucket algorithm must be sha256")
+	if len(e.Assignments) == 0 || len(e.Assignments) > 32 {
+		return errors.New("select 1–32 assignments")
 	}
-	if len(e.Salt) > 64 || len(e.Assignments) == 0 || len(e.Assignments) > 32 {
-		return errors.New("invalid experiment salt or assignments")
-	}
-	strategies := map[string]bool{}
+	seen := map[string]bool{}
 	for _, a := range e.Assignments {
-		if !StrategyIDPattern.MatchString(a.StrategyID) || a.StrategyID == "default" || strategies[a.StrategyID] || a.BucketStart < 0 || a.BucketEnd > 99 || a.BucketEnd < a.BucketStart || a.BucketEnd-a.BucketStart+1 > 99 {
-			return errors.New("each strategy requires a unique, non-overlapping range of 1–99 buckets within 0–99")
+		if !StrategyIDPattern.MatchString(a.StrategyID) || a.StrategyID == "default" || seen[a.StrategyID] || a.BucketStart < 0 || a.BucketEnd > 99 || a.BucketEnd < a.BucketStart {
+			return errors.New("each strategy requires a unique range of 1–100 buckets within 0–99")
 		}
-		strategies[a.StrategyID] = true
-	}
-	if len(e.Controls) > 2 {
-		return errors.New("select at most one control strategy per recommendation type")
-	}
-	for _, control := range e.Controls {
-		if !StrategyIDPattern.MatchString(control.StrategyID) || control.StrategyID == "default" || control.StrategyVersion < 0 || strategies[control.StrategyID] {
-			return errors.New("control strategies must be distinct from treatment strategies and each other")
-		}
-		strategies[control.StrategyID] = true
+		seen[a.StrategyID] = true
 	}
 	return nil
 }
-
-// Schema v2 pins the default/control flow as well as each treatment flow.
-func ValidateRecommendationControls(e RecommendationExperiment, strategies map[string]RecommendationStrategy) error {
-	participating := map[string]bool{}
-	for _, assignment := range e.Assignments {
-		strategy, ok := strategies[assignment.StrategyID]
-		if !ok {
-			return errors.New("missing treatment strategy")
-		}
-		participating[strategy.EffectiveType()] = true
-	}
-	controls := map[string]bool{}
-	for _, reference := range e.Controls {
-		strategy, ok := strategies[reference.StrategyID]
-		if !ok || strategy.Version != reference.StrategyVersion {
-			return errors.New("control references missing strategy version")
-		}
-		kind := strategy.EffectiveType()
-		if !participating[kind] || controls[kind] {
-			return errors.New("select exactly one control for each participating recommendation type")
-		}
-		controls[kind] = true
-	}
-	if len(controls) != len(participating) {
-		return errors.New("each participating recommendation type requires a pinned control strategy")
-	}
-	return nil
-}
-
-// A single App experiment can allocate both interfaces independently. Resolve
-// the pinned strategy versions before checking ranges, never the latest edits.
 func ValidateRecommendationAssignments(e RecommendationExperiment, strategies map[string]RecommendationStrategy) error {
 	if err := ValidateRecommendationExperiment(e); err != nil {
 		return err
 	}
 	used := map[string][100]bool{}
 	for _, a := range e.Assignments {
-		strategy, ok := strategies[a.StrategyID]
-		if !ok || strategy.Version != a.StrategyVersion {
-			return errors.New("assignment references missing strategy version")
+		s, ok := strategies[a.StrategyID]
+		if !ok {
+			return errors.New("assignment references missing strategy")
 		}
-		kind := strategy.EffectiveType()
+		kind := s.RecommendationType
 		if kind != RecommendationPersonalized && kind != RecommendationRelated {
-			return errors.New("invalid recommendation type in assignment")
+			return errors.New("invalid recommendation type")
 		}
 		buckets := used[kind]
-		for bucket := a.BucketStart; bucket <= a.BucketEnd; bucket++ {
-			if buckets[bucket] {
+		for b := a.BucketStart; b <= a.BucketEnd; b++ {
+			if buckets[b] {
 				return errors.New("bucket ranges overlap within recommendation type " + kind)
 			}
-			buckets[bucket] = true
+			buckets[b] = true
 		}
 		used[kind] = buckets
 	}

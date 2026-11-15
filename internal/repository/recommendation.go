@@ -25,9 +25,14 @@ func lockRecommendationApp(tx *gorm.DB, appid string) error {
 	return nil
 }
 
+// Definition mutations share a lock so creation and reference checks cannot race
+// with deletion. Deleted IDs stay reserved; there is no update operation.
+func lockRecommendationDefinitions(tx *gorm.DB) error {
+	return tx.Exec("SELECT pg_advisory_xact_lock(hashtext('rec-definitions'))").Error
+}
 func recommendationSources(tx *gorm.DB) ([]domain.RecallSource, error) {
 	var rows []struct{ Payload json.RawMessage }
-	if err := tx.Raw("SELECT DISTINCT ON (source_id) payload FROM t_rec_source_version ORDER BY source_id, version DESC").Scan(&rows).Error; err != nil {
+	if err := tx.Raw("SELECT payload FROM t_rec_recall WHERE deleted_at IS NULL ORDER BY recall_id").Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]domain.RecallSource, 0, len(rows))
@@ -40,37 +45,26 @@ func recommendationSources(tx *gorm.DB) ([]domain.RecallSource, error) {
 	}
 	return out, nil
 }
-
 func (r *Repository) RecommendationSources(ctx context.Context) ([]domain.RecallSource, error) {
 	return recommendationSources(r.orm.WithContext(ctx))
 }
-
-func (r *Repository) SaveRecommendationSource(ctx context.Context, source domain.RecallSource) (domain.RecallSource, error) {
+func (r *Repository) SaveRecommendationSource(ctx context.Context, v domain.RecallSource) (domain.RecallSource, error) {
 	err := r.transaction(ctx, func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "rec-source:"+source.SourceID).Error; err != nil {
+		if err := lockRecommendationDefinitions(tx); err != nil {
 			return err
 		}
-		var version int64
-		if err := tx.Raw("SELECT COALESCE(MAX(version),0) FROM t_rec_source_version WHERE source_id = ?", source.SourceID).Scan(&version).Error; err != nil {
-			return err
-		}
-		if source.Version != version {
-			return ErrConflict
-		}
-		source.Version = version + 1
-		source.CreatedAt = nowValue()
-		body, err := json.Marshal(source)
+		v.CreatedAt = nowValue()
+		raw, err := json.Marshal(v)
 		if err != nil {
 			return err
 		}
-		return tx.Exec("INSERT INTO t_rec_source_version(source_id,version,payload,created_at) VALUES (?,?,?::jsonb,?)", source.SourceID, source.Version, string(body), source.CreatedAt).Error
+		return tx.Exec("INSERT INTO t_rec_recall(recall_id,payload,created_at) VALUES (?,?::jsonb,?)", v.RecallID, string(raw), v.CreatedAt).Error
 	})
-	return source, mapSQLError(err)
+	return v, mapSQLError(err)
 }
-
 func (r *Repository) RecommendationStrategies(ctx context.Context, appid string) ([]domain.RecommendationStrategy, error) {
 	var rows []struct{ Payload json.RawMessage }
-	if err := r.orm.WithContext(ctx).Raw("SELECT DISTINCT ON (strategy_id) payload FROM t_rec_strategy_version WHERE appid = ? ORDER BY strategy_id, version DESC", appid).Scan(&rows).Error; err != nil {
+	if err := r.orm.WithContext(ctx).Raw("SELECT payload FROM t_rec_strategy WHERE appid=? AND deleted_at IS NULL ORDER BY strategy_id", appid).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]domain.RecommendationStrategy, 0, len(rows))
@@ -83,136 +77,96 @@ func (r *Repository) RecommendationStrategies(ctx context.Context, appid string)
 	}
 	return out, nil
 }
-
-func (r *Repository) SaveRecommendationStrategy(ctx context.Context, s domain.RecommendationStrategy) (domain.RecommendationStrategy, error) {
-	if s.RecommendationType == "" {
-		s.RecommendationType = domain.RecommendationPersonalized
-	}
+func (r *Repository) SaveRecommendationStrategy(ctx context.Context, v domain.RecommendationStrategy) (domain.RecommendationStrategy, error) {
 	err := r.transaction(ctx, func(tx *gorm.DB) error {
-		if err := lockRecommendationApp(tx, s.AppID); err != nil {
+		if err := lockRecommendationDefinitions(tx); err != nil {
 			return err
 		}
-		sources, err := recommendationSources(tx)
+		if err := lockRecommendationApp(tx, v.AppID); err != nil {
+			return err
+		}
+		recalls, err := recommendationSources(tx)
 		if err != nil {
 			return err
 		}
 		byID := map[string]domain.RecallSource{}
-		for _, v := range sources {
-			byID[v.SourceID] = v
+		for _, recall := range recalls {
+			byID[recall.RecallID] = recall
 		}
-		if err := domain.ValidateRecommendationStrategy(s, byID); err != nil {
-			return err
+		if err := domain.ValidateRecommendationStrategy(v, byID); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidRecommendationConfiguration, err)
 		}
-		var version int64
-		if err := tx.Raw("SELECT COALESCE(MAX(version),0) FROM t_rec_strategy_version WHERE appid=? AND strategy_id=?", s.AppID, s.StrategyID).Scan(&version).Error; err != nil {
-			return err
-		}
-		if s.Version != version {
-			return ErrConflict
-		}
-		s.Version = version + 1
-		s.CreatedAt = nowValue()
-		body, err := json.Marshal(s)
+		v.CreatedAt = nowValue()
+		raw, err := json.Marshal(v)
 		if err != nil {
 			return err
 		}
-		return tx.Exec("INSERT INTO t_rec_strategy_version(appid,strategy_id,version,payload,created_at) VALUES (?,?,?,?::jsonb,?)", s.AppID, s.StrategyID, s.Version, string(body), s.CreatedAt).Error
+		return tx.Exec("INSERT INTO t_rec_strategy(appid,strategy_id,payload,created_at) VALUES (?,?,?::jsonb,?)", v.AppID, v.StrategyID, string(raw), v.CreatedAt).Error
 	})
-	return s, mapSQLError(err)
+	return v, mapSQLError(err)
 }
-
-func (r *Repository) SaveRecommendationExperiment(ctx context.Context, e domain.RecommendationExperiment) (domain.ExperimentVersion, error) {
-	var saved domain.ExperimentVersion
-	e.Assignments = append([]domain.ExperimentAssignment(nil), e.Assignments...)
-	e.Controls = append([]domain.ExperimentControl(nil), e.Controls...)
+func (r *Repository) SaveRecommendationExperiment(ctx context.Context, e domain.RecommendationExperiment) (domain.ExperimentDefinition, error) {
+	var saved domain.ExperimentDefinition
 	err := r.transaction(ctx, func(tx *gorm.DB) error {
+		if err := lockRecommendationDefinitions(tx); err != nil {
+			return err
+		}
 		if err := lockRecommendationApp(tx, e.AppID); err != nil {
 			return err
 		}
-		var version int64
-		if err := tx.Raw("SELECT COALESCE(MAX(version),0) FROM t_rec_experiment_version WHERE appid=? AND experiment_id=?", e.AppID, e.ExperimentID).Scan(&version).Error; err != nil {
-			return err
-		}
-		if e.Version != version {
-			return ErrConflict
-		}
-		e.Version = version + 1
-		sources, err := recommendationSources(tx)
+		recalls, err := recommendationSources(tx)
 		if err != nil {
 			return err
 		}
-		sourceMap := map[string]domain.RecallSource{}
-		for _, s := range sources {
-			sourceMap[s.SourceID] = s
+		byID := map[string]domain.RecallSource{}
+		for _, v := range recalls {
+			byID[v.RecallID] = v
 		}
-		strategies := make([]domain.RecommendationStrategy, 0, len(e.Assignments)+len(e.Controls))
+		strategies := []domain.RecommendationStrategy{}
 		strategyMap := map[string]domain.RecommendationStrategy{}
-		usedSources := map[string]bool{}
-		references := make([]domain.ExperimentControl, 0, len(e.Assignments)+len(e.Controls))
+		used := map[string]bool{}
 		for _, assignment := range e.Assignments {
-			references = append(references, domain.ExperimentControl{StrategyID: assignment.StrategyID, StrategyVersion: assignment.StrategyVersion})
-		}
-		references = append(references, e.Controls...)
-		for i, a := range references {
 			var row struct{ Payload json.RawMessage }
-			query := "SELECT payload FROM t_rec_strategy_version WHERE appid=? AND strategy_id=?"
-			args := []any{e.AppID, a.StrategyID}
-			if a.StrategyVersion > 0 {
-				query += " AND version=?"
-				args = append(args, a.StrategyVersion)
-			}
-			query += " ORDER BY version DESC LIMIT 1"
-			if err := tx.Raw(query, args...).Scan(&row).Error; err != nil {
+			if err := tx.Raw("SELECT payload FROM t_rec_strategy WHERE appid=? AND strategy_id=? AND deleted_at IS NULL", e.AppID, assignment.StrategyID).Scan(&row).Error; err != nil {
 				return err
 			}
 			if len(row.Payload) == 0 {
-				return errors.New("strategy does not exist in this app")
+				return fmt.Errorf("%w: unknown strategy", ErrInvalidRecommendationConfiguration)
 			}
-			var s domain.RecommendationStrategy
-			if err := json.Unmarshal(row.Payload, &s); err != nil {
+			var strategy domain.RecommendationStrategy
+			if err := json.Unmarshal(row.Payload, &strategy); err != nil {
 				return err
 			}
-			if err := domain.ValidatePublishedRecommendationStrategy(s, sourceMap); err != nil {
-				return err
+			if err := domain.ValidateRecommendationStrategy(strategy, byID); err != nil {
+				return fmt.Errorf("%w: %v", ErrInvalidRecommendationConfiguration, err)
 			}
-			strategies = append(strategies, s)
-			strategyMap[s.StrategyID] = s
-			for _, recall := range s.Recall {
-				usedSources[recall.SourceID] = true
-			}
-			usedSources[s.FallbackSourceID] = true
-			usedSources[s.Newest.SourceID] = true
-			if i < len(e.Assignments) {
-				e.Assignments[i].StrategyVersion = s.Version
-			} else {
-				e.Controls[i-len(e.Assignments)].StrategyVersion = s.Version
+			strategies = append(strategies, strategy)
+			strategyMap[strategy.StrategyID] = strategy
+			for _, routes := range [][]domain.StrategyRecall{strategy.Recall, strategy.Fallback} {
+				for _, route := range routes {
+					used[route.RecallID] = true
+				}
 			}
 		}
 		if err := domain.ValidateRecommendationAssignments(e, strategyMap); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidRecommendationConfiguration, err)
 		}
-		if err := domain.ValidateRecommendationControls(e, strategyMap); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidRecommendationConfiguration, err)
-		}
-		// Keep snapshots independent of unrelated global definitions. An app only
-		// publishes the source versions referenced by its selected strategies.
-		snapshotSources := make([]domain.RecallSource, 0, len(usedSources))
-		for _, source := range sources {
-			if usedSources[source.SourceID] {
-				snapshotSources = append(snapshotSources, source)
+		snapshotRecalls := []domain.RecallSource{}
+		for _, v := range recalls {
+			if used[v.RecallID] {
+				snapshotRecalls = append(snapshotRecalls, v)
 			}
 		}
-		saved = domain.ExperimentVersion{RecommendationExperiment: e, Status: "draft", CreatedAt: nowValue(), Snapshot: domain.RecommendationConfig{SchemaVersion: domain.RecommendationSchemaVersion, AppID: e.AppID, Experiment: &e, Sources: snapshotSources, Strategies: strategies}}
-		body, err := json.Marshal(saved.Snapshot)
+		saved = domain.ExperimentDefinition{RecommendationExperiment: e, Status: "draft", CreatedAt: nowValue(), Snapshot: domain.RecommendationConfig{SchemaVersion: domain.RecommendationSchemaVersion, AppID: e.AppID, Experiment: &e, Recalls: snapshotRecalls, Strategies: strategies}}
+		raw, err := json.Marshal(saved.Snapshot)
 		if err != nil {
 			return err
 		}
-		return tx.Exec("INSERT INTO t_rec_experiment_version(appid,experiment_id,version,payload,created_at) VALUES (?,?,?,?::jsonb,?)", e.AppID, e.ExperimentID, e.Version, string(body), saved.CreatedAt).Error
+		return tx.Exec("INSERT INTO t_rec_experiment(appid,experiment_id,payload,created_at) VALUES (?,?,?::jsonb,?)", e.AppID, e.ExperimentID, string(raw), saved.CreatedAt).Error
 	})
 	return saved, mapSQLError(err)
 }
-
-func (r *Repository) RecommendationExperiments(ctx context.Context, appid string) ([]domain.ExperimentVersion, error) {
+func (r *Repository) RecommendationExperiments(ctx context.Context, appid string) ([]domain.ExperimentDefinition, error) {
 	var rows []struct {
 		Payload   json.RawMessage
 		Status    string
@@ -220,10 +174,10 @@ func (r *Repository) RecommendationExperiments(ctx context.Context, appid string
 		StartedAt *time.Time
 		EndedAt   *time.Time
 	}
-	if err := r.orm.WithContext(ctx).Raw("SELECT payload,status,created_at,started_at,ended_at FROM t_rec_experiment_version WHERE appid=? ORDER BY created_at DESC LIMIT 500", appid).Scan(&rows).Error; err != nil {
+	if err := r.orm.WithContext(ctx).Raw("SELECT payload,status,created_at,started_at,ended_at FROM t_rec_experiment WHERE appid=? AND deleted_at IS NULL ORDER BY created_at DESC", appid).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	out := make([]domain.ExperimentVersion, 0, len(rows))
+	out := make([]domain.ExperimentDefinition, 0, len(rows))
 	for _, row := range rows {
 		var c domain.RecommendationConfig
 		if err := json.Unmarshal(row.Payload, &c); err != nil {
@@ -232,44 +186,86 @@ func (r *Repository) RecommendationExperiments(ctx context.Context, appid string
 		if c.Experiment == nil {
 			return nil, errors.New("invalid experiment snapshot")
 		}
-		out = append(out, domain.ExperimentVersion{RecommendationExperiment: *c.Experiment, Status: row.Status, CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, EndedAt: row.EndedAt, Snapshot: c})
+		out = append(out, domain.ExperimentDefinition{RecommendationExperiment: *c.Experiment, Status: row.Status, CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, EndedAt: row.EndedAt, Snapshot: c})
 	}
 	return out, nil
 }
-
+func (r *Repository) DeleteRecommendationDefinition(ctx context.Context, kind, appid, id string) error {
+	return mapSQLError(r.transaction(ctx, func(tx *gorm.DB) error {
+		if err := lockRecommendationDefinitions(tx); err != nil {
+			return err
+		}
+		var count int64
+		var result *gorm.DB
+		switch kind {
+		case "recall":
+			needle, _ := json.Marshal([]map[string]string{{"recall_id": id}})
+			if err := tx.Raw("SELECT COUNT(*) FROM t_rec_strategy WHERE deleted_at IS NULL AND (payload->'recall' @> ?::jsonb OR payload->'fallback' @> ?::jsonb)", string(needle), string(needle)).Scan(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return ErrConflict
+			}
+			result = tx.Exec("UPDATE t_rec_recall SET deleted_at=NOW() WHERE recall_id=? AND deleted_at IS NULL", id)
+		case "strategy":
+			if err := lockRecommendationApp(tx, appid); err != nil {
+				return err
+			}
+			needle, _ := json.Marshal([]map[string]string{{"strategy_id": id}})
+			if err := tx.Raw("SELECT COUNT(*) FROM t_rec_experiment WHERE appid=? AND deleted_at IS NULL AND payload->'experiment'->'assignments' @> ?::jsonb", appid, string(needle)).Scan(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return ErrConflict
+			}
+			result = tx.Exec("UPDATE t_rec_strategy SET deleted_at=NOW() WHERE appid=? AND strategy_id=? AND deleted_at IS NULL", appid, id)
+		case "experiment":
+			if err := lockRecommendationApp(tx, appid); err != nil {
+				return err
+			}
+			if err := tx.Raw("SELECT COUNT(*) FROM t_rec_publication WHERE appid=? AND payload->'experiment'->>'experiment_id'=?", appid, id).Scan(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return ErrConflict
+			}
+			result = tx.Exec("UPDATE t_rec_experiment SET deleted_at=NOW() WHERE appid=? AND experiment_id=? AND status<>'running' AND deleted_at IS NULL", appid, id)
+		default:
+			return ErrNotFound
+		}
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	}))
+}
 func (r *Repository) RecommendationPublication(ctx context.Context, appid string) (domain.RecommendationPublication, error) {
 	var row struct {
-		Revision          int64
-		PublishedRevision int64
-		Payload           json.RawMessage
+		Pending bool
+		Payload json.RawMessage
 	}
-	err := r.orm.WithContext(ctx).Raw("SELECT revision,published_revision,payload FROM t_rec_publication WHERE appid=?", appid).Scan(&row).Error
-	p := domain.RecommendationPublication{AppID: appid, Revision: row.Revision, PublishedRevision: row.PublishedRevision}
+	err := r.orm.WithContext(ctx).Raw("SELECT pending,payload FROM t_rec_publication WHERE appid=?", appid).Scan(&row).Error
+	out := domain.RecommendationPublication{AppID: appid, Pending: row.Pending}
 	if err == nil && len(row.Payload) > 0 {
-		err = json.Unmarshal(row.Payload, &p.Config)
+		err = json.Unmarshal(row.Payload, &out.Config)
 	}
-	return p, err
+	return out, err
 }
-
-func (r *Repository) QueueRecommendationPublication(ctx context.Context, appid, experimentID string, version, expectedRevision int64) error {
+func (r *Repository) QueueRecommendationPublication(ctx context.Context, appid, experimentID string) error {
 	return mapSQLError(r.transaction(ctx, func(tx *gorm.DB) error {
 		if err := lockRecommendationApp(tx, appid); err != nil {
 			return err
 		}
-		var head struct{ Revision, PublishedRevision int64 }
-		if err := tx.Raw("SELECT revision,published_revision FROM t_rec_publication WHERE appid=?", appid).Scan(&head).Error; err != nil {
-			return err
-		}
-		if head.Revision != expectedRevision || head.Revision != head.PublishedRevision {
-			return ErrConflict
-		}
-		config := domain.RecommendationConfig{SchemaVersion: domain.RecommendationSchemaVersion, AppID: appid, Revision: head.Revision + 1, Sources: []domain.RecallSource{}, Strategies: []domain.RecommendationStrategy{}}
+		c := domain.RecommendationConfig{SchemaVersion: domain.RecommendationSchemaVersion, AppID: appid, Recalls: []domain.RecallSource{}, Strategies: []domain.RecommendationStrategy{}}
 		if experimentID != "" {
 			var row struct {
 				Payload json.RawMessage
 				Status  string
 			}
-			if err := tx.Raw("SELECT payload,status FROM t_rec_experiment_version WHERE appid=? AND experiment_id=? AND version=?", appid, experimentID, version).Scan(&row).Error; err != nil {
+			if err := tx.Raw("SELECT payload,status FROM t_rec_experiment WHERE appid=? AND experiment_id=? AND deleted_at IS NULL", appid, experimentID).Scan(&row).Error; err != nil {
 				return err
 			}
 			if len(row.Payload) == 0 {
@@ -278,36 +274,31 @@ func (r *Repository) QueueRecommendationPublication(ctx context.Context, appid, 
 			if row.Status != "draft" {
 				return ErrConflict
 			}
-			if err := json.Unmarshal(row.Payload, &config); err != nil {
+			if err := json.Unmarshal(row.Payload, &c); err != nil {
 				return err
 			}
-			config.Revision = head.Revision + 1
 		}
-		body, err := json.Marshal(config)
+		raw, err := json.Marshal(c)
 		if err != nil {
 			return err
 		}
-		return tx.Exec(`INSERT INTO t_rec_publication(appid,revision,payload) VALUES (?,?,?::jsonb)
-		ON CONFLICT(appid) DO UPDATE SET revision=EXCLUDED.revision,payload=EXCLUDED.payload,updated_at=NOW()`, appid, config.Revision, string(body)).Error
+		return tx.Exec(`INSERT INTO t_rec_publication(appid,pending,payload) VALUES (?,TRUE,?::jsonb)
+   ON CONFLICT(appid) DO UPDATE SET pending=TRUE,payload=EXCLUDED.payload,updated_at=NOW()`, appid, string(raw)).Error
 	}))
 }
-
-// Serialize publication with edits for this app. The callback performs a bounded
-// single-key Redis CAS; a failed commit is retried with the same revision.
 func (r *Repository) PublishRecommendation(ctx context.Context, appid string, publish func(domain.RecommendationConfig) (int64, error)) error {
 	return r.transaction(ctx, func(tx *gorm.DB) error {
 		if err := lockRecommendationApp(tx, appid); err != nil {
 			return err
 		}
 		var row struct {
-			Revision          int64
-			PublishedRevision int64
-			Payload           json.RawMessage
+			Pending bool
+			Payload json.RawMessage
 		}
-		if err := tx.Raw("SELECT revision,published_revision,payload FROM t_rec_publication WHERE appid=? FOR UPDATE", appid).Scan(&row).Error; err != nil {
+		if err := tx.Raw("SELECT pending,payload FROM t_rec_publication WHERE appid=? FOR UPDATE", appid).Scan(&row).Error; err != nil {
 			return err
 		}
-		if row.Revision == 0 {
+		if len(row.Payload) == 0 {
 			return nil
 		}
 		var c domain.RecommendationConfig
@@ -320,29 +311,28 @@ func (r *Repository) PublishRecommendation(ctx context.Context, appid string, pu
 		}
 		c.PublishedAt = at
 		publishedAt := time.Unix(at, 0).UTC()
-		if row.Revision > row.PublishedRevision {
-			if err := tx.Exec("UPDATE t_rec_experiment_version SET status='ended',ended_at=? WHERE appid=? AND status='running'", publishedAt, appid).Error; err != nil {
+		if row.Pending {
+			if err := tx.Exec("UPDATE t_rec_experiment SET status='ended',ended_at=? WHERE appid=? AND status='running'", publishedAt, appid).Error; err != nil {
 				return err
 			}
 			if c.Experiment != nil {
-				if err := tx.Exec("UPDATE t_rec_experiment_version SET status='running',started_at=? WHERE appid=? AND experiment_id=? AND version=? AND status='draft'", publishedAt, appid, c.Experiment.ExperimentID, c.Experiment.Version).Error; err != nil {
+				if err := tx.Exec("UPDATE t_rec_experiment SET status='running',started_at=? WHERE appid=? AND experiment_id=? AND status='draft'", publishedAt, appid, c.Experiment.ExperimentID).Error; err != nil {
 					return err
 				}
 			}
 		}
-		body, err := json.Marshal(c)
+		raw, err := json.Marshal(c)
 		if err != nil {
 			return err
 		}
-		return tx.Exec("UPDATE t_rec_publication SET published_revision=revision,payload=?::jsonb WHERE appid=?", string(body), appid).Error
+		return tx.Exec("UPDATE t_rec_publication SET pending=FALSE,payload=?::jsonb WHERE appid=?", string(raw), appid).Error
 	})
 }
-
 func (r *Repository) RecommendationPublicationApps(ctx context.Context, pendingOnly bool) ([]string, error) {
 	var rows []int64
 	query := "SELECT p.appid FROM t_rec_publication p JOIN t_app a ON a.id=p.appid WHERE NOT a.disabled"
 	if pendingOnly {
-		query += " AND p.revision>p.published_revision"
+		query += " AND p.pending"
 	}
 	if err := r.orm.WithContext(ctx).Raw(query).Scan(&rows).Error; err != nil {
 		return nil, err

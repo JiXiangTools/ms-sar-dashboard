@@ -37,7 +37,7 @@ func recommendationError(err error) error {
 		return apperror.BadRequest(err.Error(), nil)
 	}
 	if errors.Is(err, repository.ErrConflict) {
-		return apperror.Conflict("configuration changed; reload before creating or publishing a new version", err)
+		return apperror.Conflict("ID already exists, definition is referenced, or experiment is not publishable", err)
 	}
 	if errors.Is(err, repository.ErrNotFound) {
 		return apperror.NotFound("app, experiment or strategy not found", err)
@@ -60,26 +60,22 @@ func (s *RecommendationService) SaveSource(ctx context.Context, adminID int64, v
 	if err != nil {
 		return v, recommendationError(err)
 	}
-	return v, s.audit.Record(ctx, adminID, "RECOMMENDATION", "SAVE_SOURCE_VERSION", v)
+	return v, s.audit.Record(ctx, adminID, "RECOMMENDATION", "CREATE_RECALL", v)
 }
 
 type RecommendationWorkspace struct {
-	Sources         []domain.RecallSource            `json:"sources"`
+	Recalls         []domain.RecallSource            `json:"recalls"`
 	Strategies      []domain.RecommendationStrategy  `json:"strategies"`
-	Experiments     []domain.ExperimentVersion       `json:"experiments"`
+	Experiments     []domain.ExperimentDefinition    `json:"experiments"`
 	Publication     domain.RecommendationPublication `json:"publication"`
 	StrategyHistory []RecommendationStrategyHistory  `json:"strategy_history"`
 }
 
-// A reusable definition has several execution intervals, one for each experiment
-// version that references it. An ended interval never changes on later reuse.
+// A strategy keeps one execution interval per experiment that references it.
 type RecommendationStrategyHistory struct {
 	RecommendationType string     `json:"recommendation_type"`
 	StrategyID         string     `json:"strategy_id"`
-	StrategyVersion    int64      `json:"strategy_version"`
-	GroupID            string     `json:"group_id"`
 	ExperimentID       string     `json:"experiment_id"`
-	ExperimentVersion  int64      `json:"experiment_version"`
 	CreatedAt          time.Time  `json:"created_at"`
 	StartedAt          *time.Time `json:"started_at"`
 	EndedAt            *time.Time `json:"ended_at"`
@@ -100,7 +96,7 @@ func (s *RecommendationService) Workspace(ctx context.Context, appid string) (Re
 		return out, recommendationError(err)
 	}
 	var err error
-	if out.Sources, err = s.repo.RecommendationSources(ctx); err != nil {
+	if out.Recalls, err = s.repo.RecommendationSources(ctx); err != nil {
 		return out, recommendationError(err)
 	}
 	if out.Strategies, err = s.repo.RecommendationStrategies(ctx, appid); err != nil {
@@ -112,13 +108,7 @@ func (s *RecommendationService) Workspace(ctx context.Context, appid string) (Re
 	out.StrategyHistory = []RecommendationStrategyHistory{}
 	for _, e := range out.Experiments {
 		for _, strategy := range e.Snapshot.Strategies {
-			group := strategy.StrategyID
-			for _, control := range e.Controls {
-				if control.StrategyID == strategy.StrategyID {
-					group = "default"
-				}
-			}
-			out.StrategyHistory = append(out.StrategyHistory, RecommendationStrategyHistory{RecommendationType: strategy.EffectiveType(), StrategyID: strategy.StrategyID, StrategyVersion: strategy.Version, GroupID: group, ExperimentID: e.ExperimentID, ExperimentVersion: e.Version, CreatedAt: strategy.CreatedAt, StartedAt: e.StartedAt, EndedAt: e.EndedAt})
+			out.StrategyHistory = append(out.StrategyHistory, RecommendationStrategyHistory{RecommendationType: strategy.EffectiveType(), StrategyID: strategy.StrategyID, ExperimentID: e.ExperimentID, CreatedAt: strategy.CreatedAt, StartedAt: e.StartedAt, EndedAt: e.EndedAt})
 		}
 	}
 	out.Publication, err = s.repo.RecommendationPublication(ctx, appid)
@@ -135,7 +125,7 @@ func (s *RecommendationService) SaveStrategy(ctx context.Context, adminID int64,
 	}
 	byID := map[string]domain.RecallSource{}
 	for _, source := range sources {
-		byID[source.SourceID] = source
+		byID[source.RecallID] = source
 	}
 	if err := domain.ValidateRecommendationStrategy(v, byID); err != nil {
 		return v, apperror.BadRequest(err.Error(), nil)
@@ -144,14 +134,11 @@ func (s *RecommendationService) SaveStrategy(ctx context.Context, adminID int64,
 	if err != nil {
 		return v, recommendationError(err)
 	}
-	return v, s.audit.Record(ctx, adminID, "RECOMMENDATION", "SAVE_STRATEGY_VERSION", v)
+	return v, s.audit.Record(ctx, adminID, "RECOMMENDATION", "CREATE_STRATEGY", v)
 }
 
-func (s *RecommendationService) SaveExperiment(ctx context.Context, adminID int64, e domain.RecommendationExperiment) (domain.ExperimentVersion, error) {
-	var zero domain.ExperimentVersion
-	if e.BucketAlgorithm == "" {
-		e.BucketAlgorithm = "sha256"
-	}
+func (s *RecommendationService) SaveExperiment(ctx context.Context, adminID int64, e domain.RecommendationExperiment) (domain.ExperimentDefinition, error) {
+	var zero domain.ExperimentDefinition
 	if !validRecommendationAppID(e.AppID) {
 		return zero, apperror.BadRequest("invalid appid", nil)
 	}
@@ -166,84 +153,55 @@ func (s *RecommendationService) SaveExperiment(ctx context.Context, adminID int6
 	for _, v := range strategies {
 		byID[v.StrategyID] = v
 	}
-	references := append([]domain.ExperimentControl(nil), e.Controls...)
-	for _, a := range e.Assignments {
-		references = append(references, domain.ExperimentControl{StrategyID: a.StrategyID, StrategyVersion: a.StrategyVersion})
-	}
-	for _, a := range references {
-		v, ok := byID[a.StrategyID]
-		if !ok || a.StrategyVersion < 0 || a.StrategyVersion > v.Version {
-			return zero, apperror.BadRequest("unknown strategy version", nil)
-		}
+	if err := domain.ValidateRecommendationAssignments(e, byID); err != nil {
+		return zero, apperror.BadRequest(err.Error(), nil)
 	}
 	v, err := s.repo.SaveRecommendationExperiment(ctx, e)
 	if err != nil {
 		return v, recommendationError(err)
 	}
-	return v, s.audit.Record(ctx, adminID, "RECOMMENDATION", "CREATE_EXPERIMENT_VERSION", map[string]any{"appid": e.AppID, "experiment_id": e.ExperimentID, "experiment_version": v.Version})
+	return v, s.audit.Record(ctx, adminID, "RECOMMENDATION", "CREATE_EXPERIMENT", map[string]any{"appid": e.AppID, "experiment_id": e.ExperimentID})
 }
-
-var publishRecommendationScript = redis.NewScript(`
-local old = false
-if redis.call('TYPE', KEYS[1]).ok == 'string' then old = redis.call('GET', KEYS[1]) end
-if old then
-  local ok, current = pcall(cjson.decode, old)
-  if ok and type(current) == 'table' and current.appid == ARGV[4] and type(current.revision) == 'number' then
-    if current.revision > tonumber(ARGV[1]) then return redis.error_reply('newer configuration already published') end
-    if ARGV[5] == '1' and current.revision == tonumber(ARGV[1]) and type(current.published_at) == 'number' and current.published_at > 0 and current.published_at ~= tonumber(ARGV[3]) then
-      return tostring(current.published_at)
-    end
-  end
-  if old == ARGV[2] then return ARGV[3] end
-end
-redis.call('SET', KEYS[1], ARGV[2])
-return ARGV[3]
-`)
 
 func (s *RecommendationService) publish(ctx context.Context, appid string) error {
 	return s.repo.PublishRecommendation(ctx, appid, func(c domain.RecommendationConfig) (int64, error) {
-		preserveUnconfirmedAt := 0
 		if c.PublishedAt == 0 {
-			preserveUnconfirmedAt = 1
 			c.PublishedAt = time.Now().Unix()
 		}
-		for attempt := 0; attempt < 2; attempt++ {
-			raw, err := json.Marshal(c)
-			if err != nil {
-				return 0, err
-			}
-			value, err := publishRecommendationScript.Run(ctx, s.redis, []string{s.prefix + "rec:appconf:{" + appid + "}"}, c.Revision, string(raw), c.PublishedAt, appid, preserveUnconfirmedAt).Text()
-			if err != nil {
-				return 0, err
-			}
-			at, err := strconv.ParseInt(value, 10, 64)
-			if err != nil {
-				return 0, err
-			}
-			if at == c.PublishedAt {
-				return at, nil
-			}
-			c.PublishedAt = at
+		raw, err := json.Marshal(c)
+		if err != nil {
+			return 0, err
 		}
-		return 0, errors.New("publication timestamp changed during retry")
+		if err := s.redis.Set(ctx, s.prefix+"rec:appconf:{"+appid+"}", raw, 0).Err(); err != nil {
+			return 0, err
+		}
+		return c.PublishedAt, nil
 	})
 }
-
-func (s *RecommendationService) Publish(ctx context.Context, adminID int64, appid, experimentID string, version, expectedRevision int64) (domain.RecommendationPublication, error) {
+func (s *RecommendationService) Publish(ctx context.Context, adminID int64, appid, experimentID string) (domain.RecommendationPublication, error) {
 	var out domain.RecommendationPublication
-	if !validRecommendationAppID(appid) || expectedRevision < 0 || expectedRevision >= 9007199254740991 || (experimentID != "" && (!domain.RecommendationIDPattern.MatchString(experimentID) || version < 1)) {
+	if !validRecommendationAppID(appid) || (experimentID != "" && !domain.RecommendationIDPattern.MatchString(experimentID)) {
 		return out, apperror.BadRequest("invalid publication request", nil)
 	}
-	if err := s.repo.QueueRecommendationPublication(ctx, appid, experimentID, version, expectedRevision); err != nil {
+	if err := s.repo.QueueRecommendationPublication(ctx, appid, experimentID); err != nil {
 		return out, recommendationError(err)
 	}
-	if err := s.audit.Record(ctx, adminID, "RECOMMENDATION", "QUEUE_PUBLICATION", map[string]any{"appid": appid, "experiment_id": experimentID, "experiment_version": version, "revision": expectedRevision + 1}); err != nil {
+	if err := s.audit.Record(ctx, adminID, "RECOMMENDATION", "QUEUE_PUBLICATION", map[string]any{"appid": appid, "experiment_id": experimentID}); err != nil {
 		return out, err
 	}
 	if err := s.publish(ctx, appid); err != nil {
 		return out, apperror.ServiceUnavailable("configuration saved; publication pending and will retry automatically", err)
 	}
 	return s.repo.RecommendationPublication(ctx, appid)
+}
+func (s *RecommendationService) Delete(ctx context.Context, adminID int64, kind, appid, id string) error {
+	if !domain.RecommendationIDPattern.MatchString(id) || (kind != "recall" && !validRecommendationAppID(appid)) {
+		return apperror.BadRequest("invalid definition id", nil)
+	}
+	if err := s.repo.DeleteRecommendationDefinition(ctx, kind, appid, id); err != nil {
+		return recommendationError(err)
+	}
+	return s.audit.Record(ctx, adminID, "RECOMMENDATION", "DELETE_DEFINITION", map[string]any{"kind": kind, "appid": appid, "id": id})
 }
 
 func (s *RecommendationService) Reconcile(ctx context.Context, all bool) error {

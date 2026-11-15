@@ -86,8 +86,11 @@ func New(cfg config.Config, logger *log.Logger, deps Dependencies) *gin.Engine {
 		{
 			if deps.Services.Recommendation != nil {
 				rec := handler.NewRecommendationHandler(deps.Services.Recommendation)
-				authorized.GET("/recommendation/sources", rec.Sources)
-				authorized.POST("/recommendation/sources", rec.SaveSource)
+				authorized.GET("/recommendation/recalls", rec.Sources)
+				authorized.POST("/recommendation/recalls", rec.SaveSource)
+				authorized.DELETE("/recommendation/recalls/:id", rec.DeleteRecall)
+				authorized.DELETE("/recommendation/apps/:appid/strategies/:id", rec.DeleteStrategy)
+				authorized.DELETE("/recommendation/apps/:appid/experiments/:id", rec.DeleteExperiment)
 				authorized.GET("/recommendation/apps/:appid", rec.Workspace)
 				authorized.POST("/recommendation/apps/:appid/strategies", rec.SaveStrategy)
 				authorized.POST("/recommendation/apps/:appid/experiments", rec.SaveExperiment)

@@ -54,20 +54,20 @@ Offline 负责全部业务聚合和去重，只向 Dashboard 发送计数，不�
 
 ## 实验归因扩展 v2
 
-Online 以 rec_id 记录真实决策，Offline 的 `rec-decision-consumer` 从共享 Redis 归档，rec-statistics 将平铺 properties.rec_id / experiment_id / strategy_id 与原决策核对。客户端不传版本号，版本取自决策。旧卡片在新版本发布后点击，仍计入原版本；无 rec_id 的历史行为只进入原业务计数，不推算分组。
+Online 以 rec_id 记录真实决策，Offline 的 `rec-decision-consumer` 从共享 Redis 归档，rec-statistics 将平铺 properties.rec_id / experiment_id / strategy_id 与原决策核对。配置与决策仅使用实验和策略 ID。旧卡片在新实验发布后点击，仍计入原实验 ID；无 rec_id 的历史行为只进入原业务计数，不推算分组。
 
 schema_version=2 的日快照增加：
 
 ```json
 {
-  "experiments": [{"experiment_id":"exp_home","experiment_version":1,"strategy_id":"a","recommendation_type":"personalized","recommendations":100,"exposures":80,"clicks":8,"events":{"show":80,"click":8}}],
+  "experiments": [{"experiment_id":"exp_home","strategy_id":"a","recommendation_type":"personalized","recommendations":100,"exposures":80,"clicks":8,"events":{"show":80,"click":8}}],
   "attribution_quality": {"missing_decision":0,"metadata_mismatch":0,"item_mismatch":0}
 }
 ```
 
-每组按 experiment_id + experiment_version + strategy_id + recommendation_type 唯一；最多 1000 组，每组最多 64 种行为。recommendation_type 从服务端决策的 kind 取得，客户端无需增加埋点字段；personalized 和 related 的 default 对照组分别统计。兼容缺少类型的历史统计，页面显示“历史未区分”，不与新类型合并。热门接口不产生新的实验分组。recommendations 为成功推荐请求数，不是用户数，按决策 created_at 归日；行为按 action_at 归日。核对通过且 item_id 在决策返回列表中的普通物品行为才进入实验计数，广告沿用独立统计。三类质量计数分别表示找不到决策、分组元数据不符和返回物品不符。归档延迟可在下一次重算修正。
+每组按 experiment_id + strategy_id + recommendation_type 唯一；最多 1000 组，每组最多 64 种行为。recommendation_type 从服务端决策的 kind 取得，客户端无需增加埋点字段；personalized 和 related 的 default 对照组分别统计。推荐类型必须明确为 personalized 或 related，不再兼容缺少类型的旧统计。热门接口不产生新的实验分组。recommendations 为成功推荐请求数，不是用户数，按决策 created_at 归日；行为按 action_at 归日。核对通过且 item_id 在决策返回列表中的普通物品行为才进入实验计数，广告沿用独立统计。三类质量计数分别表示找不到决策、分组元数据不符和返回物品不符。归档延迟可在下一次重算修正。
 
-查询结果增加 experiments 和 attribution_quality；按原版本分别合并日数据，不合并不同版本。实验汇总始终是所选完整自然日的汇总，小时粒度不会重复累加日计数。页面明确显示此口径及曝光为零的空 CTR。这里是已关联事件的效果比较，未实现显著性检验或用户去重。
+查询结果增加 experiments 和 attribution_quality；按实验 ID、策略 ID 和推荐类型分别合并日数据。实验汇总始终是所选完整自然日的汇总，小时粒度不会重复累加日计数。页面明确显示此口径及曝光为零的空 CTR。这里是已关联事件的效果比较，未实现显著性检验或用户去重。
 
 部署前应用迁移 000003，并启动 `bash admin/start.sh rec-decision-consumer --env prod`；该进程和 rec-statistics 必须共享持久 data 卷。共享 Redis、模板和队列契约见 [Offline 实验文档](../../alg-rec-offline/docs/recommendation-experiments.md)。
 
