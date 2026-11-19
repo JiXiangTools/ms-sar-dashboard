@@ -70,7 +70,7 @@ Authorization: Bearer <access_token>
 
 首期不提供 refresh token，不提供管理员管理 API。
 
-推荐配置字段、请求示例、版本冲突及历史时间语义见 [推荐策略与实验版本](recommendation.md)。
+推荐配置支持五路行为 ICF 产出方。点击路的 `producer` 为 `click_icf`，默认 `key_template` 为 `ckicf_{appid}_{itemid}`。 [推荐策略与实验](recommendation.md#行为-icf-首轮实验)
 
 ## 3. 登录
 

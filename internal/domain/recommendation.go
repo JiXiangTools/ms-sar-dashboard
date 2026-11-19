@@ -19,6 +19,13 @@ const (
 var RecommendationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
 var StrategyIDPattern = RecommendationIDPattern
 var keyPlaceholderPattern = regexp.MustCompile(`\{[^{}]*\}`)
+var behaviorICFKeyPrefixes = map[string]string{
+	"click_icf":     "ckicf",
+	"like_icf":      "like_icf",
+	"comshare_icf":  "comshare_icf",
+	"subscribe_icf": "subscribe_icf",
+	"tipby_icf":     "tipby_icf",
+}
 
 type RecallSource struct {
 	RecallID    string    `json:"recall_id"`
@@ -90,7 +97,11 @@ func ValidateRecallSource(s RecallSource) error {
 	if s.Kind != "item" && s.Kind != "user" && s.Kind != "global" {
 		return errors.New("source kind must be item, user or global")
 	}
-	if s.Producer != "icf" && s.Producer != "ir" && s.Producer != "nl" && s.Producer != "hot" && s.Producer != "external" {
+	prefix, behaviorICF := behaviorICFKeyPrefixes[s.Producer]
+	if !behaviorICF {
+		prefix = s.Producer
+	}
+	if !behaviorICF && s.Producer != "icf" && s.Producer != "ir" && s.Producer != "nl" && s.Producer != "hot" && s.Producer != "external" {
 		return errors.New("unsupported source producer")
 	}
 	if s.ValueFormat != "compact_score" {
@@ -126,7 +137,7 @@ func ValidateRecallSource(s RecallSource) error {
 	if s.Producer == "external" && strings.HasPrefix(s.KeyTemplate, "hot_") {
 		return errors.New("hot_ keys are reserved for period rankings and nearline newest")
 	}
-	if (s.Producer == "icf" || s.Producer == "ir" || s.Producer == "nl") && s.Kind != "item" {
+	if (behaviorICF || s.Producer == "icf" || s.Producer == "ir" || s.Producer == "nl") && s.Kind != "item" {
 		return errors.New("similarity producers require an item source")
 	}
 	if s.Producer == "hot" && s.Kind != "global" {
@@ -142,8 +153,8 @@ func ValidateRecallSource(s RecallSource) error {
 	} else if s.HotPeriod != "" {
 		return errors.New("hot_period is only valid for a hot producer")
 	}
-	if s.Producer != "external" && !strings.HasPrefix(s.KeyTemplate, s.Producer+"_") {
-		return errors.New("built-in producer templates must start with the producer name followed by an underscore")
+	if s.Producer != "external" && !strings.HasPrefix(s.KeyTemplate, prefix+"_") {
+		return fmt.Errorf("built-in producer templates must start with %s_", prefix)
 	}
 	if !strings.Contains(s.KeyTemplate, "_{appid}_") && !strings.HasSuffix(s.KeyTemplate, "_{appid}") && !strings.HasPrefix(s.KeyTemplate, "{appid}_") {
 		return errors.New("{appid} must be a separate underscore-delimited key segment")

@@ -24,7 +24,7 @@
 
 - [docs/design.md](./docs/design.md)：总体设计、职责边界、数据模型和认证授权方案
 - [docs/api-admin.md](./docs/api-admin.md)：管理端 API 契约
-- [docs/recommendation.md](./docs/recommendation.md)：推荐实验配置、发布与测试环境切换步骤
+- 推荐实验配置、行为 ICF 首轮实验示例和发布步骤。 [docs/recommendation.md](./docs/recommendation.md)
 - [docs/statistics.md](./docs/statistics.md)：业务统计与实验归因口径
 - [docs/agent.md](./docs/agent.md)：协作约束和后续实现注意事项
 

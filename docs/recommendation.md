@@ -4,7 +4,7 @@
 
 ## 定义与应用范围
 
-- 召回源是全局目录，使用 `recall_id` 标识如何读取算法结果。`kind` 必须明确为 item/user/global，`producer` 为 icf/ir/nl/hot/external；`hot_period` 仅用于 hot，确实决定榜单周期和 newest 来源。相同 Redis key 可有不同 recall_id，分别使用自己的配额与权重。
+- 召回源是全局目录，使用 `recall_id` 标识如何读取算法结果。`kind` 支持 item/user/global，`producer` 支持 icf/ir/nl/hot/external 及五路行为 ICF。`hot_period` 决定 hot 的榜单周期和 newest 来源。相同 Redis key 可配置不同 `recall_id`、配额和权重。
 - 策略、实验和当前发布配置按 App 隔离。策略以 `(appid,strategy_id)` 唯一，实验以 `(appid,experiment_id)` 唯一；不同 App 可有相同策略 ID。所有定义 ID 匹配 `[a-z][a-z0-9_]{0,47}`。
 - 每个 App 可保存多个策略和实验，同一时刻运行一个实验。策略可被多个实验引用；实验创建时保存完整召回与策略快照。
 - `default` 是 Online 本地默认策略的保留 ID。Dashboard 不能创建这个 ID。当前使用哪份实验可以变化，发布不做序号比较或 CAS。
@@ -48,6 +48,16 @@ bucket_by 只选 user_id/anonymous_id。固定计算 `uint64_be(SHA1(UTF8(identi
 | hot 接口 | 请求选择的榜单 | null / null |
 
 本地 default 调整会立即影响该进程的默认流量；不固定额外对照定义，不生成默认内容 ID 或摘要 ID。执行 fallback 保留原分组。缺身份原因记为 missing_bucket_identity，未参与类型记为 recommendation_type_not_in_experiment。
+
+## 行为 ICF 首轮实验
+
+在「全局召回源」中可选择 `click_icf`、`like_icf`、`comshare_icf`、`subscribe_icf` 和 `tipby_icf`。表单自动填入物品模板，`click_icf` 使用 `ckicf_{appid}_{itemid}`。Offline 为每路独立计算候选。 [各路事件口径](../../alg-rec-offline/docs/design.md#75-输出到-redis)
+
+首轮配置包含全局召回定义、两个个性化策略和实验草稿。对照组复制 Online 仓库的默认个性化策略。实验组将混合 `icf` 设为权重 `3`、配额 `60%`，启用点击和喜欢两路，各设权重 `2.5`、配额 `10%`。草稿中其余三路停用，每组各分配 `10%` 的登录用户桶。使用自定义 Online 默认策略的环境可按当地配置调整两组的其余路由。 [首轮实验配置](examples/behavior-icf-experiment.json)
+
+1. 用 `.recalls[]` 中的定义创建全局召回源。目录已有同 ID 时可直接引用匹配的定义。
+2. 把 `.strategies[]` 中的两份定义逐个提交给目标 App 的策略创建接口，再把 `.experiment` 提交给同一 App 的实验创建接口。
+3. 更新 Dashboard、Online 和 Offline 后，可在发布前运行 `rec-icf`，查看 `redis_keys_by_producer` 中点击、喜欢两路的写入数。发布后用看板对比两组整体行为。按 `recall_id` 统计实际曝光时，以 App、`rec_id` 和 `item_id` 关联 `SHOW` 行为与归档决策。
 
 ## 发布、历史和删除
 

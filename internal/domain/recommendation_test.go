@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"encoding/json"
 	"math"
+	"os"
 	"testing"
 )
 
@@ -61,6 +63,49 @@ func TestValidateRecallSource(t *testing.T) {
 				t.Fatalf("valid=%v err=%v", tc.valid, err)
 			}
 		})
+	}
+}
+
+func TestBehaviorICFExperimentExampleUsesValidAdminDefinitions(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../docs/examples/behavior-icf-experiment.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan RecommendationConfig
+	if err := json.Unmarshal(raw, &plan); err != nil {
+		t.Fatal(err)
+	}
+	recalls := make(map[string]RecallSource, len(plan.Recalls))
+	for _, source := range plan.Recalls {
+		if err := ValidateRecallSource(source); err != nil {
+			t.Fatalf("%s: %v", source.RecallID, err)
+		}
+		recalls[source.RecallID] = source
+	}
+	strategies := make(map[string]RecommendationStrategy, len(plan.Strategies))
+	for _, strategy := range plan.Strategies {
+		if err := ValidateRecommendationStrategy(strategy, recalls); err != nil {
+			t.Fatalf("%s: %v", strategy.StrategyID, err)
+		}
+		strategies[strategy.StrategyID] = strategy
+	}
+	if plan.Experiment == nil {
+		t.Fatal("missing experiment")
+	}
+	if err := ValidateRecommendationExperiment(*plan.Experiment); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRecommendationAssignments(*plan.Experiment, strategies); err != nil {
+		t.Fatal(err)
+	}
+	click := recalls["click_icf"]
+	if click.KeyTemplate != "ckicf_{appid}_{itemid}" {
+		t.Fatalf("click key template = %q", click.KeyTemplate)
+	}
+	click.KeyTemplate = "icf_{appid}_{itemid}"
+	if err := ValidateRecallSource(click); err == nil {
+		t.Fatal("click producer accepted the mixed ICF namespace")
 	}
 }
 

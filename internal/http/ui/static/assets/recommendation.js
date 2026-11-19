@@ -7,6 +7,20 @@ const recEscape = value => escapeHTML(value);
 const recType = value => value.recommendation_type;
 const recTypeLabel = value => ({personalized: "个性化推荐", related: "相关推荐"})[value || "personalized"] || value;
 const recEndpoint = suffix => `/api/v1/admin/recommendation/apps/${encodeURIComponent(recommendationState.appid)}${suffix}`;
+const recItemProducers = [
+  ["icf", "混合 Item CF", "icf"],
+  ["click_icf", "点击 Item CF", "ckicf"],
+  ["like_icf", "喜欢 Item CF", "like_icf"],
+  ["comshare_icf", "评论和分享 Item CF", "comshare_icf"],
+  ["subscribe_icf", "追更 Item CF", "subscribe_icf"],
+  ["tipby_icf", "打赏和购买 Item CF", "tipby_icf"],
+  ["ir", "IR", "ir"],
+  ["nl", "Nearline", "nl"],
+];
+function recItemKeyTemplate(producer) {
+  const entry = recItemProducers.find(([id]) => id === producer);
+  return entry ? `${entry[2]}_{appid}_{itemid}` : "";
+}
 async function loadRecommendation(force = false) {
   const r = recommendationState;
   if (!hasSession() || (r.loading && !force) || (r.loaded && !force)) return;
@@ -95,10 +109,16 @@ function renderRecommendationForm() {
   let content = "", title = "";
   if (kind === "source") {
     title = "新增全局召回源";
-    const keyTemplate = v.producer === "hot" ? `hot_{appid}_${v.hot_period || "hour"}` : (v.key_template || "icf_{appid}_{itemid}");
-    content = recInput("name", "名称", v.name, "required maxlength=64") + recInput("recall_id", "标识", v.recall_id, `required pattern="[a-z][a-z0-9_]{0,47}" maxlength=48 `) + recSelect("kind", "读取类型", [["item", "按物品"], ["user", "按用户"], ["global", "全局榜单"]], v.kind || "item") + recSelect("producer", "数据产出", [["icf", "Item CF"], ["ir", "IR"], ["nl", "Nearline"], ["hot", "榜单（热门 / 上新）"], ["external", "外部服务（含 User CF）"]], v.producer || "icf") + recInput("key_template", "Key 模板", keyTemplate, `required maxlength=256 ${v.producer === "hot" ? "readonly" : ""}`);
+    const producer = v.producer || "icf";
+    const keyTemplate = producer === "hot" ? `hot_{appid}_${v.hot_period || "hour"}` : (v.key_template || recItemKeyTemplate(producer));
+    const producers = [...recItemProducers, ["hot", "榜单（热门 / 上新）"], ["external", "外部服务（含 User CF）"]];
+    content = recInput("name", "名称", v.name, "required maxlength=64")
+      + recInput("recall_id", "标识", v.recall_id, 'required pattern="[a-z][a-z0-9_]{0,47}" maxlength=48')
+      + recSelect("kind", "读取类型", [["item", "按物品"], ["user", "按用户"], ["global", "全局榜单"]], v.kind || "item")
+      + recSelect("producer", "数据产出", producers, producer)
+      + recInput("key_template", "Key 模板", keyTemplate, `required maxlength=256 ${producer === "hot" ? "readonly" : ""}`);
     content += recSelect("hot_period", "榜单类型（仅榜单产出使用）", [["hour","小时"],["day","日榜"],["week","周榜"],["month","月榜"],["quarter","季榜"],["all","总榜"],["newest","上新（nearline）"]], v.hot_period || "hour");
-    content += `<p class="experiment-help">模板支持 {appid}、{itemid}、{userid}，appid 必须独立为下划线分隔的一段。内置产出方的模板以 icf_、ir_、nl_、hot_ 开头；热门周期只能使用 hot_{appid}_{周期}。日榜使用 hot_{appid}_day；最新召回使用 hot_{appid}_newest，由 nearline 维护。Value 使用现有紧凑分数格式。</p>`;
+    content += `<p class="experiment-help">选择内置产出方时会填入默认 Key 模板。{appid} 必须单独占一段，物品和用户召回分别使用 {itemid} 和 {userid}。上新榜由 Nearline 维护。</p>`;
   } else if (kind === "strategy") {
     title = "新建应用策略";
     content = recSelect("recommendation_type", "推荐类型", [["personalized", "个性化推荐"], ["related", "相关推荐"]], recType(v)) + recInput("name", "策略中文名称", v.name, "required maxlength=64") + recInput("strategy_id", "策略 ID", v.strategy_id, `required pattern="[a-z][a-z0-9_]{0,47}" maxlength=48 `);
@@ -144,6 +164,12 @@ function bindRecommendationEvents() {
       if (producer === "hot") {
         form.elements.namedItem("kind").value = "global";
         key.value = `hot_{appid}_${form.elements.namedItem("hot_period").value}`;
+      } else if (event.target.name === "producer") {
+        const template = recItemKeyTemplate(producer);
+        if (template) {
+          form.elements.namedItem("kind").value = "item";
+          key.value = template;
+        }
       }
     }
     if (event.target.name === "recommendation_type") {

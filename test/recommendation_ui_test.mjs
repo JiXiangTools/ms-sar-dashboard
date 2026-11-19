@@ -41,6 +41,27 @@ test("hot recall uses canonical key and create-only endpoint", async () => {
   assert.equal(requests[0].body.recall_id,"latest"); assert.equal("version" in requests[0].body,false);
 });
 
+test("the five behavior ICF sources choose item keys and submit the selected producer", async () => {
+  const {ui, events, requests} = setup();
+  ui.state.draft = {kind: "source", value: {}};
+  const html = ui.render();
+  const fields = {producer:{value:""}, kind:{value:"global"}, hot_period:{value:"day"}, key_template:{value:"hot_{appid}_day",readOnly:true}};
+  const formEl = {id:"recommendation-form", elements:{namedItem:name=>fields[name]}};
+  for (const [producer, prefix] of [["click_icf","ckicf"], ["like_icf","like_icf"], ["comshare_icf","comshare_icf"], ["subscribe_icf","subscribe_icf"], ["tipby_icf","tipby_icf"]]) {
+    assert.ok(html.includes(`<option value="${producer}"`));
+    fields.producer.value = producer;
+    events.change({target:{name:"producer", form:formEl}});
+    assert.equal(fields.kind.value, "item");
+    assert.equal(fields.key_template.value, `${prefix}_{appid}_{itemid}`);
+    assert.equal(fields.key_template.readOnly, false);
+  }
+  await ui.save(form({producer:"click_icf", name:"点击 Item CF", recall_id:"click_icf", kind:"item", key_template:"ckicf_{appid}_{itemid}"}));
+  assert.deepEqual(requests[0].body, {
+    producer:"click_icf", name:"点击 Item CF", recall_id:"click_icf", kind:"item", hot_period:"",
+    key_template:"ckicf_{appid}_{itemid}", value_format:"compact_score",
+  });
+});
+
 test("recall and multiple fallback routes preserve decimals and disabled flags", async () => {
   const {ui, requests} = setup();
   ui.state.sources.push({recall_id:"hot_hour", name:"小时榜", kind:"global"});

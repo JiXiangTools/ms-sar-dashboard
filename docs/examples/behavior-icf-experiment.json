@@ -1,0 +1,71 @@
+{
+  "recalls": [
+    {"recall_id": "icf", "name": "icf", "producer": "icf", "kind": "item", "key_template": "icf_{appid}_{itemid}", "value_format": "compact_score"},
+    {"recall_id": "ir", "name": "ir", "producer": "ir", "kind": "item", "key_template": "ir_{appid}_{itemid}", "value_format": "compact_score"},
+    {"recall_id": "nl", "name": "nl", "producer": "nl", "kind": "item", "key_template": "nl_{appid}_{itemid}", "value_format": "compact_score"},
+    {"recall_id": "hot_newest", "name": "hot_newest", "producer": "hot", "kind": "global", "key_template": "hot_{appid}_newest", "value_format": "compact_score", "hot_period": "newest"},
+    {"recall_id": "hot_day", "name": "hot_day", "producer": "hot", "kind": "global", "key_template": "hot_{appid}_day", "value_format": "compact_score", "hot_period": "day"},
+    {"recall_id": "hot_week", "name": "hot_week", "producer": "hot", "kind": "global", "key_template": "hot_{appid}_week", "value_format": "compact_score", "hot_period": "week"},
+    {"recall_id": "hot_month", "name": "hot_month", "producer": "hot", "kind": "global", "key_template": "hot_{appid}_month", "value_format": "compact_score", "hot_period": "month"},
+    {"recall_id": "hot_all", "name": "hot_all", "producer": "hot", "kind": "global", "key_template": "hot_{appid}_all", "value_format": "compact_score", "hot_period": "all"},
+    {"recall_id": "click_icf", "name": "点击 Item CF", "kind": "item", "producer": "click_icf", "key_template": "ckicf_{appid}_{itemid}", "value_format": "compact_score"},
+    {"recall_id": "like_icf", "name": "喜欢 Item CF", "kind": "item", "producer": "like_icf", "key_template": "like_icf_{appid}_{itemid}", "value_format": "compact_score"},
+    {"recall_id": "comshare_icf", "name": "评论和分享 Item CF", "kind": "item", "producer": "comshare_icf", "key_template": "comshare_icf_{appid}_{itemid}", "value_format": "compact_score"},
+    {"recall_id": "subscribe_icf", "name": "追更 Item CF", "kind": "item", "producer": "subscribe_icf", "key_template": "subscribe_icf_{appid}_{itemid}", "value_format": "compact_score"},
+    {"recall_id": "tipby_icf", "name": "打赏和购买 Item CF", "kind": "item", "producer": "tipby_icf", "key_template": "tipby_icf_{appid}_{itemid}", "value_format": "compact_score"}
+  ],
+  "strategies": [
+    {
+      "strategy_id": "behavior_icf_control",
+      "name": "行为 ICF 对照组",
+      "recommendation_type": "personalized",
+      "recall": [
+        {"recall_id": "icf", "weight":3,"recall_rate":1,"disabled":false},
+        {"recall_id": "ir", "weight":2,"recall_rate":1,"disabled":false},
+        {"recall_id": "nl", "weight":1,"recall_rate":0.5,"disabled":false},
+        {"recall_id": "hot_newest", "weight":4,"recall_rate":0.1,"disabled":false}
+      ],
+      "fallback": [
+        {"recall_id": "hot_day", "weight":5,"recall_rate":1,"disabled":false},
+        {"recall_id": "hot_week", "weight":4,"recall_rate":1,"disabled":false},
+        {"recall_id": "hot_month", "weight":3,"recall_rate":1,"disabled":false},
+        {"recall_id": "hot_all", "weight":2,"recall_rate":1,"disabled":false},
+        {"recall_id": "hot_newest", "weight":1,"recall_rate":1,"disabled":false}
+      ],
+      "rank": "recall_weight"
+    },
+    {
+      "strategy_id": "behavior_icf_trial",
+      "name": "行为 ICF 实验组",
+      "recommendation_type": "personalized",
+      "recall": [
+        {"recall_id": "icf", "weight":3,"recall_rate":0.6,"disabled":false},
+        {"recall_id": "ir", "weight":2,"recall_rate":1,"disabled":false},
+        {"recall_id": "nl", "weight":1,"recall_rate":0.5,"disabled":false},
+        {"recall_id": "hot_newest", "weight":4,"recall_rate":0.1,"disabled":false},
+        {"recall_id": "click_icf", "weight":2.5,"recall_rate":0.1,"disabled":false},
+        {"recall_id": "like_icf", "weight":2.5,"recall_rate":0.1,"disabled":false},
+        {"recall_id": "comshare_icf", "weight":2.5,"recall_rate":0.1,"disabled":true},
+        {"recall_id": "subscribe_icf", "weight":2.5,"recall_rate":0.1,"disabled":true},
+        {"recall_id": "tipby_icf", "weight":2.5,"recall_rate":0.1,"disabled":true}
+      ],
+      "fallback": [
+        {"recall_id": "hot_day", "weight":5,"recall_rate":1,"disabled":false},
+        {"recall_id": "hot_week", "weight":4,"recall_rate":1,"disabled":false},
+        {"recall_id": "hot_month", "weight":3,"recall_rate":1,"disabled":false},
+        {"recall_id": "hot_all", "weight":2,"recall_rate":1,"disabled":false},
+        {"recall_id": "hot_newest", "weight":1,"recall_rate":1,"disabled":false}
+      ],
+      "rank": "recall_weight"
+    }
+  ],
+  "experiment": {
+    "experiment_id": "behavior_icf_first_round",
+    "name": "行为 ICF 首轮实验",
+    "bucket_by": "user_id",
+    "assignments": [
+      {"strategy_id": "behavior_icf_control", "bucket_start": 0, "bucket_end": 9},
+      {"strategy_id": "behavior_icf_trial", "bucket_start": 10, "bucket_end": 19}
+    ]
+  }
+}
