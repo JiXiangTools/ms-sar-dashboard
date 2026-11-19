@@ -90,20 +90,17 @@ jobs:
           username: ${{ secrets.CI_REGISTRY_USERNAME }}
           password: ${{ secrets.CI_REGISTRY_PASSWORD }}
 
-      - name: Pull base images
-        shell: bash
-        run: |
-          docker pull "${REGISTRY}/library/golang:1.26"
-          docker pull "${REGISTRY}/library/alpine:3.21"
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
           platforms: linux/amd64
+          pull: true
           push: true
           tags: ${{ steps.meta.outputs.image_name }}
+          cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:buildcache-amd64,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
           build-args: |
             COMMIT_ID=${{ steps.meta.outputs.short_sha }}
             BUILD_TIME=${{ steps.meta.outputs.build_time }}

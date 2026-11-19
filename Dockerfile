@@ -1,7 +1,5 @@
 FROM dockerhub.seobot.cc/library/golang:1.26 AS builder
 
-ARG COMMIT_ID=dev
-ARG BUILD_TIME=unknown
 ARG GOPROXY=https://goproxy.cn,direct
 ARG HTTP_PROXY=
 ARG HTTPS_PROXY=
@@ -29,6 +27,8 @@ RUN go mod download
 
 COPY . .
 
+ARG COMMIT_ID=dev
+ARG BUILD_TIME=unknown
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -tags nomsgpack -trimpath \
     -ldflags "-s -w -X github.com/JiXiangTools/ms-sar-dashboard/internal/version.Commit=${COMMIT_ID} -X github.com/JiXiangTools/ms-sar-dashboard/internal/version.BuildTime=${BUILD_TIME}" \
